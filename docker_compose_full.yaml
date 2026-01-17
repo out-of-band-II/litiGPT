@@ -1,0 +1,123 @@
+# docker-compose.yml
+# Orchestrate training, MLflow, and bot deployment
+
+version: '3.8'
+
+services:
+  # MLflow tracking server
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:latest
+    container_name: mlflow-server
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./mlruns:/mlflow/mlruns
+      - ./mlartifacts:/mlflow/mlartifacts
+    command: >
+      mlflow server
+      --backend-store-uri sqlite:///mlflow/mlruns.db
+      --default-artifact-root /mlflow/mlartifacts
+      --host 0.0.0.0
+      --port 5000
+    networks:
+      - reddit-bot-network
+    restart: unless-stopped
+
+  # Training service (run manually, not as daemon)
+  training:
+    build:
+      context: .
+      dockerfile: Dockerfile.training
+    container_name: reddit-training
+    runtime: nvidia  # Requires NVIDIA Container Toolkit
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - TRANSFORMERS_CACHE=/workspace/.cache/huggingface
+    volumes:
+      - ./data:/workspace/data
+      - ./models:/workspace/models
+      - ./mlruns:/workspace/mlruns
+      - ./config.yaml:/workspace/config.yaml
+      - huggingface-cache:/workspace/.cache/huggingface
+    depends_on:
+      - mlflow
+    networks:
+      - reddit-bot-network
+    # Don't auto-start, run manually with:
+    # docker-compose run --rm training python module_3_training.py
+    profiles:
+      - training
+
+  # Bot deployment service
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    container_name: reddit-bot
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    env_file:
+      - .env
+    volumes:
+      - ./models:/app/models
+      - ./logs:/app/logs
+      - ./config.yaml:/app/config.yaml
+    depends_on:
+      - mlflow
+    networks:
+      - reddit-bot-network
+    restart: unless-stopped
+    # Only start if you want bot running
+    profiles:
+      - bot
+
+  # Optional: Tensorboard for training visualization
+  tensorboard:
+    image: tensorflow/tensorflow:latest
+    container_name: tensorboard
+    ports:
+      - "6006:6006"
+    volumes:
+      - ./models:/logs
+    command: tensorboard --logdir=/logs --host=0.0.0.0 --port=6006
+    networks:
+      - reddit-bot-network
+    profiles:
+      - monitoring
+
+networks:
+  reddit-bot-network:
+    driver: bridge
+
+volumes:
+  huggingface-cache:
+    driver: local
+
+# Usage Examples:
+# ================
+#
+# 1. Start MLflow server only:
+#    docker-compose up -d mlflow
+#    Access at: http://localhost:5000
+#
+# 2. Run training (one-time):
+#    docker-compose --profile training run --rm training
+#
+# 3. Start bot deployment:
+#    docker-compose --profile bot up -d bot
+#
+# 4. View logs:
+#    docker-compose logs -f bot
+#
+# 5. Stop all services:
+#    docker-compose down
+#
+# 6. Full pipeline with monitoring:
+#    docker-compose --profile training --profile monitoring up
+#
+# 7. Rebuild containers:
+#    docker-compose build
+#
+# 8. Clean up everything:
+#    docker-compose down -v

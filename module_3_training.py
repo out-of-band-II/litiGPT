@@ -209,19 +209,51 @@ class RedditModelTrainer:
         return output_path
 
 if __name__ == "__main__":
-    # Example usage
-    trainer = RedditModelTrainer(
-        model_name="meta-llama/Llama-3.1-8B-Instruct",
-        output_dir="models/reddit_bot_lora"
+    # Example usage with MLflow tracking
+    from module_8_mlflow_tracking import MLflowTracker
+    import yaml
+    
+    # Load config
+    with open("config.yaml", 'r') as f:
+        config = yaml.safe_load(f)
+    
+    # Initialize MLflow
+    tracker = MLflowTracker(
+        experiment_name="reddit-chatbot-training",
+        tracking_uri=os.getenv("MLFLOW_TRACKING_URI", "file:./mlruns")
     )
     
-    # Train
-    trainer.train(
-        data_dir="data/training",
-        num_epochs=3,
-        batch_size=4,
-        learning_rate=2e-4
+    # Start run
+    run_name = f"train_{config['data']['target_username']}"
+    tracker.start_run(run_name=run_name, tags={
+        'model': config['model']['base_model'],
+        'user': config['data']['target_username']
+    })
+    
+    # Log config
+    tracker.log_config(config)
+    
+    # Initialize trainer
+    trainer = RedditModelTrainer(
+        model_name=config['model']['base_model'],
+        output_dir=config['model']['output_dir']
     )
+    
+    # Train with MLflow logging
+    trainer.train(
+        data_dir=config['data']['training_dir'],
+        num_epochs=config['training']['num_epochs'],
+        batch_size=config['training']['batch_size'],
+        learning_rate=config['training']['learning_rate']
+    )
+    
+    # Log model
+    tracker.log_model(config['model']['output_dir'], model_name="reddit_bot")
+    
+    # End run
+    tracker.end_run()
+    
+    print(f"\nView results at: {tracker.tracking_uri}")
     
     # Optional: merge and save full model
     # trainer.merge_and_save_full_model()

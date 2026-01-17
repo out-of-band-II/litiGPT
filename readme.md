@@ -70,11 +70,27 @@ pip install transformers datasets accelerate peft trl bitsandbytes
 pip install pandas numpy jsonlines scikit-learn
 pip install praw python-dotenv tqdm
 
+# Install MLflow for experiment tracking
+pip install mlflow
+
 # Optional: for faster inference
 pip install vllm
 
 # Optional: for training monitoring
 pip install tensorboard wandb
+```
+
+### 2b. Docker Setup (Alternative)
+
+```bash
+# Using Docker Compose for full stack
+docker-compose up -d mlflow  # Start MLflow tracking server
+
+# For training (with GPU)
+docker-compose --profile training run --rm training
+
+# For bot deployment
+docker-compose --profile bot up -d bot
 ```
 
 ### 3. Project Structure
@@ -93,7 +109,11 @@ reddit-chatbot/
 ├── module_4_inference.py
 ├── module_5_deployment.py
 ├── module_6_config_setup.py
+├── module_8_mlflow_tracking.py
 ├── run_pipeline.py
+├── Dockerfile.training        # GPU training container
+├── Dockerfile.bot            # Lightweight bot container
+├── docker-compose.yml        # Orchestration
 ├── config.yaml
 ├── .env
 └── requirements.txt
@@ -389,6 +409,97 @@ load_in_8bit=True
 ---
 
 ## Advanced Topics
+
+### Experiment Tracking with MLflow
+
+**View Training Runs:**
+```bash
+# Start MLflow UI
+mlflow ui --port 5000
+
+# Or with Docker
+docker-compose up -d mlflow
+# Access at http://localhost:5000
+```
+
+**Compare Experiments:**
+```python
+from module_8_mlflow_tracking import MLflowTracker
+
+tracker = MLflowTracker()
+best_runs = tracker.compare_runs(metric="val_loss", n_best=5)
+```
+
+**Load Best Model:**
+```python
+best_model = tracker.load_best_model(metric="val_loss")
+```
+
+### Docker Deployment
+
+**Training Container (GPU):**
+```bash
+# Build
+docker build -f Dockerfile.training -t reddit-training .
+
+# Run training
+docker run --gpus all \
+  -v $(pwd)/data:/workspace/data \
+  -v $(pwd)/models:/workspace/models \
+  reddit-training
+```
+
+**Bot Container (CPU):**
+```bash
+# Build
+docker build -f Dockerfile.bot -t reddit-bot .
+
+# Run bot
+docker run -d \
+  --name reddit-bot \
+  -v $(pwd)/models:/app/models \
+  -v $(pwd)/.env:/app/.env \
+  --restart unless-stopped \
+  reddit-bot
+```
+
+**Full Stack with Docker Compose:**
+```bash
+# Start MLflow + Bot
+docker-compose --profile bot up -d
+
+# Run training
+docker-compose --profile training run --rm training
+
+# View logs
+docker-compose logs -f bot
+
+# Stop all
+docker-compose down
+```
+
+### Cloud Deployment
+
+**AWS ECS:**
+```python
+from module_12_cloud_deployment import AWSDeployer
+
+deployer = AWSDeployer(region="us-east-1")
+repo_uri = deployer.create_ecr_repository()
+# Build and push Docker image to ECR
+# Then deploy to ECS
+```
+
+**Google Cloud Run:**
+```bash
+./deploy_gcp.sh
+```
+
+**Kubernetes:**
+```bash
+kubectl apply -f k8s-bot-deployment.yaml
+kubectl logs -f -n reddit-bot deployment/reddit-bot
+```
 
 ### Using Different Models
 
