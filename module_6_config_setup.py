@@ -68,7 +68,18 @@ data:
   raw_dir: "data/raw"
   processed_dir: "data/processed"
   training_dir: "data/training"
+  
+  # Single-user mode
   target_username: "specific_reddit_user"
+  
+  # Multi-user mode (overrides target_username if enabled)
+  multi_user: true
+  target_usernames:
+    - "user_alice"
+    - "user_bob"
+    - "user_charlie"
+  min_comments_per_user: 100
+  
   min_comment_length: 10
   max_comment_length: 512
   min_score: 1
@@ -107,6 +118,35 @@ bot:
   min_score_threshold: 1
   cooldown_seconds: 120
   max_context_depth: 3
+  
+  # Multi-user bot settings
+  multi_user: true
+  available_users:
+    - "user_alice"
+    - "user_bob"
+    - "user_charlie"
+  user_classifier_path: "models/user_classifier.pkl"
+  user_selection_method: "auto"  # auto, tfidf, keyword, random
+
+# User classification (for multi-user)
+user_classification:
+  enabled: true
+  method: "tfidf"  # tfidf, keyword, hybrid
+  
+  # Keyword-based classification (optional)
+  user_keywords:
+    user_alice:
+      - "python"
+      - "machine learning"
+      - "data science"
+    user_bob:
+      - "gaming"
+      - "valorant"
+      - "esports"
+    user_charlie:
+      - "fitness"
+      - "gym"
+      - "workout"
 """
 
 # ============================================

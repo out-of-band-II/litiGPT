@@ -95,6 +95,77 @@ class RedditDataExtractor:
         print(f"Extracted {len(user_comments)} comments and {len(user_posts)} posts")
         return user_data
     
+    def extract_multiple_users(self, usernames: List[str],
+                               comments_file: str = "comments.jsonl",
+                               posts_file: str = "submissions.jsonl",
+                               min_comments_per_user: int = 100) -> Dict[str, pd.DataFrame]:
+        """
+        Extract data for multiple users
+        
+        Args:
+            usernames: List of usernames to extract
+            comments_file: Path to comments JSONL
+            posts_file: Path to posts JSONL
+            min_comments_per_user: Minimum comments required per user
+            
+        Returns:
+            Dictionary mapping username to their data
+        """
+        users_data = {}
+        
+        for username in usernames:
+            print(f"\n{'='*60}")
+            print(f"Processing user: {username}")
+            print('='*60)
+            
+            user_data = self.extract_user_data(username, comments_file, posts_file)
+            
+            if len(user_data) < min_comments_per_user:
+                print(f"⚠️  Warning: User {username} has only {len(user_data)} items (min: {min_comments_per_user})")
+                print(f"   Skipping {username}")
+                continue
+            
+            users_data[username] = user_data
+            print(f"✓ Added {username} with {len(user_data)} items")
+        
+        print(f"\n{'='*60}")
+        print(f"Total users extracted: {len(users_data)}")
+        print('='*60)
+        
+        return users_data
+    
+    def save_multi_user_data(self, users_data: Dict[str, pd.DataFrame], 
+                            output_dir: str = "data/processed"):
+        """Save multi-user data with metadata"""
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        
+        # Save each user's data
+        for username, data in users_data.items():
+            user_file = output_path / f"{username}_data.jsonl"
+            data.to_json(user_file, orient='records', lines=True)
+            print(f"Saved {username}: {user_file}")
+        
+        # Save metadata
+        metadata = {
+            'users': list(users_data.keys()),
+            'user_stats': {
+                username: {
+                    'total_items': len(data),
+                    'comments': len(data[data['type'] == 'comment']),
+                    'posts': len(data[data['type'] == 'post'])
+                }
+                for username, data in users_data.items()
+            }
+        }
+        
+        import json
+        metadata_file = output_path / "users_metadata.json"
+        with open(metadata_file, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        
+        print(f"\nMetadata saved: {metadata_file}")
+    
     def build_conversation_threads(self, all_data: List[Dict]) -> Dict[str, List[Dict]]:
         """Build conversation threads from all subreddit data"""
         
@@ -108,7 +179,11 @@ class RedditDataExtractor:
             
             if item.get('type') == 'comment' or 'parent_id' in item:
                 comments_by_id[item_id] = item
-                parent_id = item.get('parent_id', '').split('_')[-1]
+                pid = item.get('parent_id', '')
+                try:
+                    parent_id = pid.split('_')[-1]
+                except:
+                    print(f"Error processign {item}")
                 if parent_id not in comments_by_parent:
                     comments_by_parent[parent_id] = []
                 comments_by_parent[parent_id].append(item)
@@ -153,11 +228,15 @@ class RedditDataExtractor:
         print(f"Saved to {output_path}")
 
 if __name__ == "__main__":
-    # Example usage
+    # Example usage - Single user
     extractor = RedditDataExtractor("data/raw")
-    
-    # Extract specific user's data
     user_data = extractor.extract_user_data("target_username")
-    
-    # Save
     extractor.save_processed_data(user_data, "data/processed/user_data.jsonl")
+    
+    # Example usage - Multiple users
+    users = ["user1", "user2", "user3"]
+    users_data = extractor.extract_multiple_users(
+        usernames=users,
+        min_comments_per_user=100
+    )
+    extractor.save_multi_user_data(users_data, "data/processed")

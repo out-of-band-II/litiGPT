@@ -63,9 +63,15 @@ class RedditDataPreprocessor:
         return df.reset_index(drop=True)
     
     def create_training_pairs(self, user_data: pd.DataFrame, 
-                             all_comments: List[Dict]) -> List[Dict]:
+                             all_comments: List[Dict],
+                             username: str = None) -> List[Dict]:
         """
         Create (context, response) pairs for training
+        
+        Args:
+            user_data: User's comments/posts
+            all_comments: All subreddit comments for context
+            username: Username to tag in training data (for multi-user)
         """
         from module_1_data_extraction import RedditDataExtractor
         
@@ -93,15 +99,46 @@ class RedditDataPreprocessor:
             response_text = row['body']
             
             if context_text and response_text:
-                training_pairs.append({
+                pair = {
                     'context': context_text,
                     'response': response_text,
                     'score': row.get('score', 0),
                     'created_utc': row.get('created_utc', 0)
-                })
+                }
+                
+                # Add username if doing multi-user training
+                if username:
+                    pair['username'] = username
+                
+                training_pairs.append(pair)
         
         print(f"Created {len(training_pairs)} training pairs")
         return training_pairs
+    
+    def create_multi_user_training_pairs(self, 
+                                        users_data: Dict[str, pd.DataFrame],
+                                        all_comments: List[Dict]) -> List[Dict]:
+        """
+        Create training pairs for multiple users
+        
+        Args:
+            users_data: Dictionary mapping username to their data
+            all_comments: All subreddit comments
+            
+        Returns:
+            List of training pairs with username tags
+        """
+        all_pairs = []
+        
+        for username, user_data in users_data.items():
+            print(f"\nProcessing {username}...")
+            pairs = self.create_training_pairs(user_data, all_comments, username)
+            all_pairs.extend(pairs)
+        
+        print(f"\nTotal training pairs: {len(all_pairs)}")
+        print(f"Users: {list(users_data.keys())}")
+        
+        return all_pairs
     
     def _format_context(self, context_items: List[Dict]) -> str:
         """Format context items into a single string"""
@@ -117,7 +154,8 @@ class RedditDataPreprocessor:
         return "\n".join(formatted)
     
     def format_for_training(self, pairs: List[Dict], 
-                           format_type: str = "chatml") -> List[Dict]:
+                           format_type: str = "chatml",
+                           multi_user: bool = False) -> List[Dict]:
         """
         Format training pairs for specific model format
         
@@ -125,17 +163,30 @@ class RedditDataPreprocessor:
         - chatml: ChatML format (for Llama, Mistral)
         - alpaca: Alpaca instruction format
         - raw: Simple context -> response
+        
+        Args:
+            pairs: Training pairs
+            format_type: Format to use
+            multi_user: Whether this is multi-user training
         """
         
         formatted_data = []
         
         for pair in pairs:
+            username = pair.get('username', 'unknown')
+            
             if format_type == "chatml":
+                # System prompt changes based on multi-user mode
+                if multi_user:
+                    system_content = f"You are {username}, a Reddit user. Respond in {username}'s writing style and tone."
+                else:
+                    system_content = "You are a helpful Reddit user responding to comments in a conversational manner."
+                
                 formatted = {
                     "messages": [
                         {
                             "role": "system",
-                            "content": "You are a helpful Reddit user responding to comments in a conversational manner."
+                            "content": system_content
                         },
                         {
                             "role": "user",
@@ -147,16 +198,35 @@ class RedditDataPreprocessor:
                         }
                     ]
                 }
+                
+                # Add username metadata for tracking
+                if multi_user:
+                    formatted['username'] = username
+                    
             elif format_type == "alpaca":
+                if multi_user:
+                    instruction = f"Respond to the following Reddit conversation as {username} would:"
+                else:
+                    instruction = "Respond to the following Reddit conversation:"
+                    
                 formatted = {
-                    "instruction": "Respond to the following Reddit conversation:",
+                    "instruction": instruction,
                     "input": pair['context'],
                     "output": pair['response']
                 }
+                
+                if multi_user:
+                    formatted['username'] = username
+                    
             else:  # raw
-                formatted = {
-                    "text": f"### Context:\n{pair['context']}\n\n### Response:\n{pair['response']}"
-                }
+                if multi_user:
+                    formatted = {
+                        "text": f"### User: {username}\n### Context:\n{pair['context']}\n\n### Response:\n{pair['response']}"
+                    }
+                else:
+                    formatted = {
+                        "text": f"### Context:\n{pair['context']}\n\n### Response:\n{pair['response']}"
+                    }
             
             formatted_data.append(formatted)
         
@@ -199,8 +269,10 @@ if __name__ == "__main__":
     
     # Load all comments for context building
     all_comments = []
-    with jsonlines.open("data/raw/comments.jsonl") as reader:
-        all_comments = list(reader)
+    
+    from module_1_data_extraction import RedditDataExtractor
+    extractor = RedditDataExtractor('data/raw')
+    all_comments = extractor._load_reddit_data_file("data/raw/comments.jsonl")
     
     # Filter quality
     user_data = preprocessor.filter_quality(user_data)

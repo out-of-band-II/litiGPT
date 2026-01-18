@@ -72,11 +72,23 @@ class RedditBotInference:
         print("Model loaded successfully")
         return model, tokenizer
     
-    def format_prompt(self, context: str, system_prompt: Optional[str] = None) -> List[Dict]:
-        """Format conversation context into chat messages"""
+    def format_prompt(self, context: str, 
+                     system_prompt: Optional[str] = None,
+                     username: Optional[str] = None) -> List[Dict]:
+        """
+        Format conversation context into chat messages
+        
+        Args:
+            context: The conversation context
+            system_prompt: Optional system prompt override
+            username: Username to impersonate (for multi-user models)
+        """
         
         if system_prompt is None:
-            system_prompt = "You are a helpful Reddit user responding to comments in a conversational manner."
+            if username:
+                system_prompt = f"You are {username}, a Reddit user. Respond in {username}'s writing style and tone."
+            else:
+                system_prompt = "You are a helpful Reddit user responding to comments in a conversational manner."
         
         messages = [
             {"role": "system", "content": system_prompt},
@@ -88,6 +100,7 @@ class RedditBotInference:
     def generate_response(self,
                          context: str,
                          system_prompt: Optional[str] = None,
+                         username: Optional[str] = None,
                          max_new_tokens: int = 256,
                          temperature: float = 0.7,
                          top_p: float = 0.9,
@@ -99,6 +112,7 @@ class RedditBotInference:
         Args:
             context: The conversation context
             system_prompt: Optional system prompt override
+            username: Username to impersonate (for multi-user models)
             max_new_tokens: Maximum tokens to generate
             temperature: Sampling temperature (higher = more creative)
             top_p: Nucleus sampling parameter
@@ -107,7 +121,7 @@ class RedditBotInference:
         """
         
         # Format prompt
-        messages = self.format_prompt(context, system_prompt)
+        messages = self.format_prompt(context, system_prompt, username)
         
         # Apply chat template
         prompt = self.tokenizer.apply_chat_template(
@@ -145,41 +159,63 @@ class RedditBotInference:
         
         return generated_text.strip()
     
-    def generate_batch(self,
-                      contexts: List[str],
-                      system_prompt: Optional[str] = None,
-                      **kwargs) -> List[str]:
-        """Generate responses for multiple contexts"""
+    def generate_as_user(self, context: str, username: str, **kwargs) -> str:
+        """
+        Convenience method to generate response as specific user
         
-        responses = []
-        for context in contexts:
-            response = self.generate_response(
-                context,
-                system_prompt=system_prompt,
-                **kwargs
-            )
-            responses.append(response)
-        
-        return responses
+        Args:
+            context: Conversation context
+            username: Username to impersonate
+            **kwargs: Additional generation parameters
+        """
+        return self.generate_response(context, username=username, **kwargs)
     
-    def interactive_mode(self):
-        """Run interactive testing mode"""
+    def interactive_mode(self, available_users: Optional[List[str]] = None):
+        """
+        Run interactive testing mode
+        
+        Args:
+            available_users: List of users the model can impersonate
+        """
         
         print("\n=== Interactive Mode ===")
+        
+        if available_users:
+            print(f"Available users: {', '.join(available_users)}")
+            print("You can specify a user with: @username context")
+        
         print("Enter conversation context (or 'quit' to exit)")
         print("=" * 50)
         
         while True:
-            context = input("\nContext: ").strip()
+            user_input = input("\nContext: ").strip()
             
-            if context.lower() in ['quit', 'exit', 'q']:
+            if user_input.lower() in ['quit', 'exit', 'q']:
                 break
             
-            if not context:
+            if not user_input:
                 continue
             
+            # Parse username if provided
+            username = None
+            context = user_input
+            
+            if user_input.startswith('@') and ' ' in user_input:
+                parts = user_input.split(' ', 1)
+                username = parts[0][1:]  # Remove @
+                context = parts[1]
+                
+                if available_users and username not in available_users:
+                    print(f"Warning: {username} not in trained users: {available_users}")
+            
             print("\nGenerating response...")
-            response = self.generate_response(context)
+            
+            if username:
+                print(f"As user: {username}")
+                response = self.generate_as_user(context, username)
+            else:
+                response = self.generate_response(context)
+            
             print(f"\nBot: {response}")
             print("-" * 50)
 
@@ -226,13 +262,30 @@ if __name__ == "__main__":
         load_in_4bit=True
     )
     
-    # Test generation
+    # Test generation - single user mode
     context = """user1: What's your favorite programming language?
 user2: I've been using Python a lot lately, but I'm curious about Rust."""
     
     response = bot.generate_response(context, temperature=0.8)
     print(f"Context:\n{context}\n")
-    print(f"Bot Response:\n{response}")
+    print(f"Bot Response:\n{response}\n")
     
-    # Interactive mode
-    # bot.interactive_mode()
+    # Test generation - multi-user mode
+    print("="*60)
+    print("Multi-User Mode Example")
+    print("="*60)
+    
+    # List of users the model was trained on
+    available_users = ["alice", "bob", "charlie"]
+    
+    # Generate as different users
+    for username in available_users:
+        response = bot.generate_as_user(
+            context=context,
+            username=username,
+            temperature=0.8
+        )
+        print(f"\nAs {username}: {response}")
+    
+    # Interactive mode with user selection
+    # bot.interactive_mode(available_users=available_users)

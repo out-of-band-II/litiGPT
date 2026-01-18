@@ -33,7 +33,10 @@ class RedditBot:
                  trigger_keywords: Optional[list] = None,
                  reply_probability: float = 0.3,
                  min_score_threshold: int = 1,
-                 cooldown_seconds: int = 60):
+                 cooldown_seconds: int = 60,
+                 multi_user: bool = False,
+                 available_users: Optional[List[str]] = None,
+                 user_classifier_path: Optional[str] = None):
         """
         Initialize Reddit bot
         
@@ -46,6 +49,9 @@ class RedditBot:
             reply_probability: Probability of replying to eligible comments
             min_score_threshold: Minimum comment score to respond to
             cooldown_seconds: Seconds between responses
+            multi_user: Whether model supports multiple users
+            available_users: List of users model can impersonate
+            user_classifier_path: Path to user classifier (for auto-selection)
         """
         
         # Load environment variables
@@ -64,6 +70,17 @@ class RedditBot:
             load_in_4bit=True
         )
         
+        # Multi-user support
+        self.multi_user = multi_user
+        self.available_users = available_users or []
+        self.user_classifier = None
+        
+        if multi_user and user_classifier_path:
+            from module_13_user_classifier import UserClassifier
+            self.user_classifier = UserClassifier()
+            self.user_classifier.load_profiles(user_classifier_path)
+            logging.info(f"Loaded user classifier for: {self.available_users}")
+        
         # Bot settings
         self.trigger_keywords = trigger_keywords or []
         self.reply_probability = reply_probability
@@ -75,6 +92,8 @@ class RedditBot:
         self.last_reply_time = 0
         
         logging.info(f"Bot initialized for r/{subreddit_name}")
+        if multi_user:
+            logging.info(f"Multi-user mode: {', '.join(self.available_users)}")
     
     def _init_reddit_api(self) -> praw.Reddit:
         """Initialize PRAW Reddit API client"""
@@ -161,6 +180,36 @@ class RedditBot:
         
         return "\n".join(context_parts)
     
+    def select_user_for_context(self, context: str) -> Optional[str]:
+        """
+        Select which user to impersonate based on context
+        
+        Args:
+            context: Conversation context
+            
+        Returns:
+            Username or None for default behavior
+        """
+        
+        if not self.multi_user:
+            return None
+        
+        if self.user_classifier:
+            # Use classifier to auto-select
+            predicted = self.user_classifier.predict_user(context, threshold=0.1)
+            if predicted in self.available_users:
+                logging.info(f"Auto-selected user: {predicted}")
+                return predicted
+        
+        # Fallback: random selection from available users
+        import random
+        if self.available_users:
+            selected = random.choice(self.available_users)
+            logging.info(f"Randomly selected user: {selected}")
+            return selected
+        
+        return None
+    
     def generate_and_post_reply(self, comment):
         """Generate response and post it"""
         
@@ -169,18 +218,38 @@ class RedditBot:
             context = self.get_comment_context(comment)
             logging.info(f"\nContext:\n{context}\n")
             
+            # Select user if multi-user mode
+            username = None
+            if self.multi_user:
+                username = self.select_user_for_context(context)
+                if username:
+                    logging.info(f"Responding as: {username}")
+            
             # Generate response
-            response = self.bot_inference.generate_response(
-                context,
-                max_new_tokens=200,
-                temperature=0.8,
-                top_p=0.9
-            )
+            if username:
+                response = self.bot_inference.generate_as_user(
+                    context=context,
+                    username=username,
+                    max_new_tokens=200,
+                    temperature=0.8,
+                    top_p=0.9
+                )
+            else:
+                response = self.bot_inference.generate_response(
+                    context,
+                    max_new_tokens=200,
+                    temperature=0.8,
+                    top_p=0.9
+                )
             
             logging.info(f"Generated response: {response}")
             
             # Add disclaimer
-            disclaimer = "\n\n---\n^(I'm a bot mimicking a specific user's style. Beep boop! 🤖)"
+            if self.multi_user and username:
+                disclaimer = f"\n\n---\n^(I'm a bot mimicking {username}'s style. Beep boop! 🤖)"
+            else:
+                disclaimer = "\n\n---\n^(I'm a bot mimicking a specific user's style. Beep boop! 🤖)"
+            
             full_response = response + disclaimer
             
             # Post reply
@@ -252,17 +321,34 @@ class RedditBot:
         self.monitor_comments()
 
 if __name__ == "__main__":
-    # Configuration
-    bot = RedditBot(
+    # Example 1: Single-user bot
+    single_user_bot = RedditBot(
         model_path="models/reddit_bot_lora",
         base_model="meta-llama/Llama-3.1-8B-Instruct",
-        subreddit_name="test",  # Change to your target subreddit
+        subreddit_name="test",
         bot_username="your_bot_username",
-        trigger_keywords=None,  # Set to [] or specific keywords
-        reply_probability=0.2,  # 20% chance to reply
+        trigger_keywords=None,
+        reply_probability=0.2,
         min_score_threshold=1,
-        cooldown_seconds=120
+        cooldown_seconds=120,
+        multi_user=False
     )
     
-    # Run
-    bot.run()
+    # Example 2: Multi-user bot with auto-selection
+    multi_user_bot = RedditBot(
+        model_path="models/reddit_bot_lora",
+        base_model="meta-llama/Llama-3.1-8B-Instruct",
+        subreddit_name="test",
+        bot_username="multi_personality_bot",
+        trigger_keywords=None,
+        reply_probability=0.2,
+        min_score_threshold=1,
+        cooldown_seconds=120,
+        multi_user=True,
+        available_users=["alice", "bob", "charlie"],
+        user_classifier_path="models/user_classifier.pkl"
+    )
+    
+    # Run the bot
+    # single_user_bot.run()
+    # multi_user_bot.run()
