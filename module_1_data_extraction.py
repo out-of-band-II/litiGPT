@@ -8,6 +8,8 @@ import pandas as pd
 from pathlib import Path
 from typing import Dict, List
 import json
+import zstandard as zstd
+import io
 
 class RedditDataExtractor:
     def __init__(self, data_dir: str):
@@ -22,19 +24,59 @@ class RedditDataExtractor:
                 data.append(obj)
         return data
     
+    def extract_zstd(self,filename,condition=None):
+        """
+        Processes a JSON stream from a compressed file and yields objects based on condition.
+
+        Args:
+            filepath (str): Path to the compressed JSON file
+            condition (callable): Function to evaluate each object; if None, all objects are yielded
+
+        Yields:
+            dict: Each JSON object that meets the condition
+        """
+        i=0
+        filepath = self.data_dir /filename
+        with open(filepath, 'rb') as compressed_file:
+            dctx = zstd.ZstdDecompressor(max_window_size=2147483648)
+            with dctx.stream_reader(compressed_file) as stream_reader:
+                # Read all content into a buffer
+                text_content = io.TextIOWrapper(stream_reader, encoding='utf-8')
+                for line in text_content:
+                    obj = json.loads(line)
+                    if condition is None or condition(obj):
+                        i=i+1
+                        if i%1000==0:
+                            print (i, ' comments collected.')
+                        yield obj
+
+    def _load_reddit_data_file(self,filename:str):
+        admitted_ext = [".jsonl",".zst",".parquet"]
+        print(f"Loading comments from {filename}...")
+        if Path(filename).suffix == ".jsonl":
+            data = self.load_jsonl(filename)
+        elif Path(filename).suffix == ".zst":
+            data :List[Dict] = [entry for entry in self.extract_zstd(filename)]
+        elif Path(filename).suffix == ".parquet":
+            data = pd.read_parquet(self.data_dir/filename).to_dict('records')
+        else:
+            raise ValueError(f"{filename} suffix ({Path(filename).suffix}) not recognized (must be onf of {', '.join(admitted_ext)})")
+        
+        return data
+        
     def extract_user_data(self, username: str, 
                          comments_file: str = "comments.jsonl",
                          posts_file: str = "submissions.jsonl") -> pd.DataFrame:
         """Extract all comments and posts from a specific user"""
         
         # Load comments
-        print(f"Loading comments from {comments_file}...")
-        comments = self.load_jsonl(comments_file)
+        print(f"Loading comments from {posts_file}...")
+        comments = self._load_reddit_data_file(comments_file)
         user_comments = [c for c in comments if c.get('author') == username]
         
         # Load posts
         print(f"Loading posts from {posts_file}...")
-        posts = self.load_jsonl(posts_file)
+        posts = self._load_reddit_data_file(posts_file)
         user_posts = [p for p in posts if p.get('author') == username]
         
         # Convert to DataFrame
