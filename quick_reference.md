@@ -13,12 +13,21 @@ pip install -r requirements.txt
 
 # Docker setup
 docker-compose up -d mlflow
+
+# Cloud GPU (Colab/Kaggle)
+# See CLOUD_GPU_TRAINING.md for complete guide
+# Templates: colab_training.ipynb, kaggle_training.py
 ```
 
 ## 🚀 Quick Start
 
 ```bash
-# Full pipeline (local)
+# Full pipeline (local) - Single user
+python run_pipeline.py --step all
+
+# Full pipeline - Multi-user
+# 1. Edit config.yaml to enable multi_user and list target_usernames
+# 2. Run pipeline
 python run_pipeline.py --step all
 
 # Step-by-step
@@ -28,9 +37,33 @@ python run_pipeline.py --step train
 python run_pipeline.py --step eval
 python run_pipeline.py --step deploy
 
+# Build user classifier (multi-user only)
+python -c "from module_13_user_classifier import build_user_classifier_from_data; \
+classifier = build_user_classifier_from_data('data/processed'); \
+classifier.save_profiles('models/user_classifier.pkl')"
+
 # With Docker
 docker-compose --profile training run --rm training
 docker-compose --profile bot up -d bot
+```
+
+## 👥 Multi-User Commands
+
+```bash
+# Extract multiple users
+python -c "from module_1_data_extraction import RedditDataExtractor; \
+extractor = RedditDataExtractor('data/raw'); \
+users_data = extractor.extract_multiple_users(['alice', 'bob', 'charlie']); \
+extractor.save_multi_user_data(users_data, 'data/processed')"
+
+# Build and test classifier
+python module_13_user_classifier.py
+
+# Test user selection
+python -c "from module_13_user_classifier import UserClassifier; \
+classifier = UserClassifier(); \
+classifier.load_profiles('models/user_classifier.pkl'); \
+print(classifier.classify_context('your context here', top_k=3))"
 ```
 
 ## 📊 MLflow Commands
@@ -96,6 +129,29 @@ docker push YOUR_DOCKERHUB/reddit-training:latest
 python module_3_training.py
 ```
 
+### Google Colab (Free GPU Training)
+```python
+# Use colab_training.ipynb template
+# 1. Upload to Google Colab
+# 2. Upload your data files
+# 3. Run all cells
+# 4. Download trained model
+
+# Or quick command:
+!wget https://raw.githubusercontent.com/yourrepo/colab_training.ipynb
+# Open in Colab and run
+```
+
+### Kaggle (Free GPU Training)
+```python
+# Use kaggle_training.py template
+# 1. Create Kaggle dataset with your JSONL files
+# 2. Create new notebook, enable GPU
+# 3. Add your dataset
+# 4. Paste kaggle_training.py
+# 5. Run and commit to save output
+```
+
 ### AWS ECS (Bot)
 ```python
 from module_12_cloud_deployment import AWSDeployer
@@ -152,7 +208,7 @@ MLFLOW_TRACKING_URI=http://localhost:5000
 ## 🧪 Testing
 
 ```python
-# Interactive mode
+# Interactive mode - Single user
 from module_4_inference import RedditBotInference
 
 bot = RedditBotInference(
@@ -161,12 +217,26 @@ bot = RedditBotInference(
 )
 bot.interactive_mode()
 
-# Generate single response
-response = bot.generate_response(
-    context="user: What's your favorite game?",
+# Interactive mode - Multi-user
+bot.interactive_mode(available_users=["alice", "bob", "charlie"])
+# Usage: @alice what's your opinion on Python?
+
+# Generate as specific user
+response = bot.generate_as_user(
+    context="What's your favorite game?",
+    username="bob",
     temperature=0.8
 )
 print(response)
+
+# Auto-select user based on context
+from module_13_user_classifier import UserClassifier
+classifier = UserClassifier()
+classifier.load_profiles("models/user_classifier.pkl")
+
+context = "What's the best Python library?"
+user = classifier.predict_user(context)
+response = bot.generate_as_user(context, username=user)
 ```
 
 ## 📈 Model Evaluation
@@ -251,12 +321,13 @@ reddit-chatbot/
 
 | File | Purpose |
 |------|---------|
-| `module_1_data_extraction.py` | Extract user comments |
+| `module_1_data_extraction.py` | Extract user comments (single/multi) |
 | `module_2_preprocessing.py` | Clean and format data |
 | `module_3_training.py` | Fine-tune model |
-| `module_4_inference.py` | Generate responses |
+| `module_4_inference.py` | Generate responses (with user selection) |
 | `module_5_deployment.py` | Deploy bot to Reddit |
 | `module_8_mlflow_tracking.py` | Track experiments |
+| `module_13_user_classifier.py` | Auto-select user personality |
 | `run_pipeline.py` | Run full pipeline |
 | `Dockerfile.training` | GPU training container |
 | `Dockerfile.bot` | Bot deployment container |
@@ -264,13 +335,15 @@ reddit-chatbot/
 ## 💡 Tips
 
 1. **Start small**: Use 500-1000 comments for initial testing
-2. **Monitor MLflow**: Track metrics to improve quality
-3. **Use Docker**: Ensures consistent environment
-4. **Test locally**: Validate before cloud deployment
-5. **Set rate limits**: Avoid Reddit API bans
-6. **Add disclaimer**: Make it clear it's a bot
-7. **Monitor costs**: Cloud resources add up
-8. **Backup models**: Save to S3/GCS regularly
+2. **Multi-user**: 3-5 diverse users works best
+3. **Monitor MLflow**: Track metrics to improve quality
+4. **Use Docker**: Ensures consistent environment
+5. **Test locally**: Validate before cloud deployment
+6. **Set rate limits**: Avoid Reddit API bans
+7. **Add disclaimer**: Make it clear it's a bot
+8. **Monitor costs**: Cloud resources add up
+9. **Backup models**: Save to S3/GCS regularly
+10. **User diversity**: Choose users with different topics/styles
 
 ## 📊 Resource Requirements
 

@@ -10,6 +10,7 @@ from typing import Dict, List
 import json
 import zstandard as zstd
 import io
+import polars as pl
 
 class RedditDataExtractor:
     def __init__(self, data_dir: str):
@@ -47,18 +48,26 @@ class RedditDataExtractor:
                     if condition is None or condition(obj):
                         i=i+1
                         if i%1000==0:
-                            print (i, ' comments collected.')
+                            print (i, ' rows extracted.')
                         yield obj
 
     def _load_reddit_data_file(self,filename:str):
         admitted_ext = [".jsonl",".zst",".parquet"]
-        print(f"Loading comments from {filename}...")
+        print(f"Loading data from {filename}...")
         if Path(filename).suffix == ".jsonl":
             data = self.load_jsonl(filename)
         elif Path(filename).suffix == ".zst":
             data :List[Dict] = [entry for entry in self.extract_zstd(filename)]
+            df =pl.DataFrame(data,infer_schema_length=None).drop(['media_embed','secure_media_embed'])
+            print(df.describe())
+            try:
+                df.write_parquet((Path(self.data_dir)/filename).with_suffix('.parquet'))
+            except Exception as e:
+                print(f"Error {e} occured")
+                df.to_pandas().to_parquet((Path(self.data_dir)/filename).with_suffix('.parquet'))
+
         elif Path(filename).suffix == ".parquet":
-            data = pd.read_parquet(self.data_dir/filename).to_dict('records')
+            data = pl.read_parquet(self.data_dir/filename).to_dicts()
         else:
             raise ValueError(f"{filename} suffix ({Path(filename).suffix}) not recognized (must be onf of {', '.join(admitted_ext)})")
         
@@ -70,7 +79,7 @@ class RedditDataExtractor:
         """Extract all comments and posts from a specific user"""
         
         # Load comments
-        print(f"Loading comments from {posts_file}...")
+        print(f"Loading comments from {comments_file}...")
         comments = self._load_reddit_data_file(comments_file)
         user_comments = [c for c in comments if c.get('author') == username]
         
@@ -230,7 +239,7 @@ class RedditDataExtractor:
 if __name__ == "__main__":
     # Example usage - Single user
     extractor = RedditDataExtractor("data/raw")
-    user_data = extractor.extract_user_data("target_username")
+    user_data = extractor.extract_user_data("target_username","litigi_comments.parquet","litigi_submissions.jsonl")
     extractor.save_processed_data(user_data, "data/processed/user_data.jsonl")
     
     # Example usage - Multiple users
