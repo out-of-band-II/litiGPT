@@ -1,5 +1,7 @@
 data:
   raw_dir: "data/raw"
+  submission_filename: "litigi_submissions.jsonl"
+  comments_filename: "litigi_comments.parquet"
   processed_dir: "data/processed"
   training_dir: "data/training"
   target_username: ["specific_reddit_user", "another_user"]

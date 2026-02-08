@@ -11,6 +11,7 @@ import json
 import zstandard as zstd
 import io
 import polars as pl
+from argparse import ArgumentParser
 
 class RedditDataExtractor:
     def __init__(self, data_dir: str):
@@ -130,7 +131,7 @@ class RedditDataExtractor:
             user_data = self.extract_user_data(username, comments_file, posts_file)
             
             if len(user_data) < min_comments_per_user:
-                print(f"⚠️  Warning: User {username} has only {len(user_data)} items (min: {min_comments_per_user})")
+                print(f"   Warning: User {username} has only {len(user_data)} items (min: {min_comments_per_user})")
                 print(f"   Skipping {username}")
                 continue
             
@@ -236,16 +237,44 @@ class RedditDataExtractor:
         data.to_json(output_path, orient='records', lines=True)
         print(f"Saved to {output_path}")
 
+def data_extraction_parser():
+    parser = ArgumentParser(description="Data extraction module",
+                            epilog=f"""
+    Examples:
+    python %(prog)s -c litigi_comments.parquet -s submissions.jsonl --multi-user
+    """)
+
+    parser.add_argument("--dir","-d", required=False, default="data/raw", help="Data directory")
+    parser.add_argument("--comments","-c", required=False, default="comments.parquet",
+                       help="Comment data")
+    parser.add_argument("--submissions","-s", required=False, default="submissions.jsonl", help="Submissison data")
+    parser.add_argument("--multi-user", action="store_true", 
+                       help="Enable multi-user mode")
+    
+
+    return parser
+    
+
 if __name__ == "__main__":
     # Example usage - Single user
+    parser = data_extraction_parser()
+    args = parser.parse_args()
+    submission_data_file = args.submissions
+    comments_data_file = args.comments
+
+    multi_user:bool = args.multi_user
     extractor = RedditDataExtractor("data/raw")
-    user_data = extractor.extract_user_data("target_username","litigi_comments.parquet","litigi_submissions.jsonl")
-    extractor.save_processed_data(user_data, "data/processed/user_data.jsonl")
-    
-    # Example usage - Multiple users
-    users = ["user1", "user2", "user3"]
-    users_data = extractor.extract_multiple_users(
-        usernames=users,
-        min_comments_per_user=100
-    )
-    extractor.save_multi_user_data(users_data, "data/processed")
+    if not multi_user:
+        
+        user_data = extractor.extract_user_data("target_username",comments_data_file,submission_data_file)
+        extractor.save_processed_data(user_data, "data/processed/user_data.jsonl")
+    else:
+        # Example usage - Multiple users
+        users = ["user1", "user2", "user3"]
+        users_data = extractor.extract_multiple_users(
+            usernames=users,
+            min_comments_per_user=100,
+            comments_file=comments_data_file,
+            posts_file = submission_data_file
+        )
+        extractor.save_multi_user_data(users_data, "data/processed")

@@ -38,8 +38,8 @@ class PipelineRunner:
         # Extract user data
         user_data = extractor.extract_user_data(
             username=config['target_username'],
-            comments_file="comments.jsonl",
-            posts_file="submissions.jsonl"
+            comments_file=config.get("comments_filename","comments.jsonl"),
+            posts_file=config.get("comments_filename","submissions.jsonl")
         )
         
         # Save
@@ -72,7 +72,7 @@ class PipelineRunner:
         
         # Load all comments for context
         all_comments = []
-        comments_path = f"{config['raw_dir']}/comments.jsonl"
+        comments_path = f"{config['raw_dir']}/{config.get("comments_filename","comments.jsonl")}"
 
         extractor = RedditDataExtractor('data/raw')
         all_comments = extractor._load_reddit_data_file(comments_path)
