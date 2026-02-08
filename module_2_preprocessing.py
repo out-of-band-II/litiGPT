@@ -8,6 +8,8 @@ import re
 from typing import List, Dict, Tuple
 import jsonlines
 from pathlib import Path
+import polars as pl
+from argparse import ArgumentParser
 
 class RedditDataPreprocessor:
     def __init__(self, min_length: int = 10, max_length: int = 512):
@@ -38,7 +40,7 @@ class RedditDataPreprocessor:
     
     def filter_quality(self, df: pd.DataFrame) -> pd.DataFrame:
         """Filter low-quality entries"""
-        
+        print(df.head())
         # Clean body/selftext
         df['body'] = df.apply(
             lambda x: self.clean_text(x.get('body') or x.get('selftext', '')), 
@@ -63,8 +65,8 @@ class RedditDataPreprocessor:
         return df.reset_index(drop=True)
     
     def create_training_pairs(self, user_data: pd.DataFrame, 
-                             all_comments: List[Dict],
-                             username: str = None) -> List[Dict]:
+                             all_comments: pl.DataFrame,
+                             username: str = None,raw_data_dir = "data/raw") -> List[Dict]:
         """
         Create (context, response) pairs for training
         
@@ -75,7 +77,7 @@ class RedditDataPreprocessor:
         """
         from module_1_data_extraction import RedditDataExtractor
         
-        extractor = RedditDataExtractor("data/raw")
+        extractor = RedditDataExtractor(raw_data_dir)
         thread_data = extractor.build_conversation_threads(all_comments)
         
         training_pairs = []
@@ -117,7 +119,7 @@ class RedditDataPreprocessor:
     
     def create_multi_user_training_pairs(self, 
                                         users_data: Dict[str, pd.DataFrame],
-                                        all_comments: List[Dict]) -> List[Dict]:
+                                        all_comments: pl.DataFrame) -> List[Dict]:
         """
         Create training pairs for multiple users
         
@@ -260,19 +262,42 @@ class RedditDataPreprocessor:
         
         print(f"Saved training data to {output_dir}")
 
+def preprocessing_parser():
+    parser = ArgumentParser(description="Preprocessing module",
+                            epilog=f"""
+    Examples:
+    python %(prog)s -c litigi_comments.parquet -u outofband
+    """)
+    parser.add_argument("--dir","-d", required=False, default="data/raw", help="Data directory")
+
+    parser.add_argument("--comments","-c", required=False, default="comments.parquet",
+                       help="Comment data")
+    parser.add_argument("--user","-u",required=True)
+
+    return parser
+
+
 if __name__ == "__main__":
+
+    parser = preprocessing_parser()
+    args = parser.parse_args()
+
+    comments_data_file = args.comments
+    user = args.user
+    raw_data_dir = args.dir
+
     # Example usage
     preprocessor = RedditDataPreprocessor()
     
     # Load user data
-    user_data = pd.read_json("data/processed/user_data.jsonl", lines=True)
+    user_data = pd.read_parquet(f"data/processed/{user}_data.parquet")
     
     # Load all comments for context building
     all_comments = []
     
     from module_1_data_extraction import RedditDataExtractor
-    extractor = RedditDataExtractor('data/raw')
-    all_comments = extractor._load_reddit_data_file("data/raw/comments.jsonl")
+    extractor = RedditDataExtractor(raw_data_dir)
+    all_comments = extractor.load_data(comments_data_file)
     
     # Filter quality
     user_data = preprocessor.filter_quality(user_data)

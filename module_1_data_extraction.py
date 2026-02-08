@@ -1,139 +1,82 @@
 """
-Module 1: Data Extraction
-Extract target user's comments and posts from Reddit JSONL data
+Module 1: Data Extraction (Polars Version)
 """
 
-import jsonlines
-import pandas as pd
-from pathlib import Path
-from typing import Dict, List
-import json
-import zstandard as zstd
-import io
 import polars as pl
+import jsonlines
+from pathlib import Path
+from typing import Dict, List, Union
 from argparse import ArgumentParser
 
 class RedditDataExtractor:
     def __init__(self, data_dir: str):
         self.data_dir = Path(data_dir)
         
-    def load_jsonl(self, filename: str) -> List[Dict]:
-        """Load a JSONL file"""
-        data = []
+    def load_data(self, filename: str) -> pl.DataFrame:
+        """
+        Carica file JSONL o Parquet automaticamente
+        """
         filepath = self.data_dir / filename
-        with jsonlines.open(filepath) as reader:
-            for obj in reader:
-                data.append(obj)
-        return data
-    
-    def extract_zstd(self,filename,condition=None):
-        """
-        Processes a JSON stream from a compressed file and yields objects based on condition.
-
-        Args:
-            filepath (str): Path to the compressed JSON file
-            condition (callable): Function to evaluate each object; if None, all objects are yielded
-
-        Yields:
-            dict: Each JSON object that meets the condition
-        """
-        i=0
-        filepath = self.data_dir /filename
-        with open(filepath, 'rb') as compressed_file:
-            dctx = zstd.ZstdDecompressor(max_window_size=2147483648)
-            with dctx.stream_reader(compressed_file) as stream_reader:
-                # Read all content into a buffer
-                text_content = io.TextIOWrapper(stream_reader, encoding='utf-8')
-                for line in text_content:
-                    obj = json.loads(line)
-                    if condition is None or condition(obj):
-                        i=i+1
-                        if i%1000==0:
-                            print (i, ' rows extracted.')
-                        yield obj
-
-    def _load_reddit_data_file(self,filename:str):
-        admitted_ext = [".jsonl",".zst",".parquet"]
-        print(f"Loading data from {filename}...")
-        if Path(filename).suffix == ".jsonl":
-            data = self.load_jsonl(filename)
-        elif Path(filename).suffix == ".zst":
-            data :List[Dict] = [entry for entry in self.extract_zstd(filename)]
-            df =pl.DataFrame(data,infer_schema_length=None).drop(['media_embed','secure_media_embed'])
-            print(df.describe())
-            try:
-                df.write_parquet((Path(self.data_dir)/filename).with_suffix('.parquet'))
-            except Exception as e:
-                print(f"Error {e} occured")
-                df.to_pandas().to_parquet((Path(self.data_dir)/filename).with_suffix('.parquet'))
-
-        elif Path(filename).suffix == ".parquet":
-            data = pl.read_parquet(self.data_dir/filename).to_dicts()
+        
+        if filepath.suffix == '.parquet':
+            return pl.read_parquet(filepath)
+        elif filepath.suffix == '.jsonl':
+            return pl.read_ndjson(filepath,infer_schema_length=None)
         else:
-            raise ValueError(f"{filename} suffix ({Path(filename).suffix}) not recognized (must be onf of {', '.join(admitted_ext)})")
-        
-        return data
-        
-    def extract_user_data(self, username: str, 
+            raise ValueError(f"Formato non supportato: {filepath.suffix}")
+    
+    def extract_user_data(self, 
+                         username: str,
                          comments_file: str = "comments.jsonl",
-                         posts_file: str = "submissions.jsonl") -> pd.DataFrame:
-        """Extract all comments and posts from a specific user"""
+                         posts_file: str = "submissions.jsonl") -> pl.DataFrame:
+        """
+        Estrae dati utente (versione Polars)
+        """
+        print(f"Caricamento commenti da {comments_file}...")
+        comments = self.load_data(comments_file)
         
-        # Load comments
-        print(f"Loading comments from {comments_file}...")
-        comments = self._load_reddit_data_file(comments_file)
-        user_comments = [c for c in comments if c.get('author') == username]
+        # Filtra per utente
+        user_comments = comments.filter(pl.col('author') == username)
+        user_comments = user_comments.with_columns(pl.lit('comment').alias('type'))
+        print(user_comments.head())
         
-        # Load posts
-        print(f"Loading posts from {posts_file}...")
-        posts = self._load_reddit_data_file(posts_file)
-        user_posts = [p for p in posts if p.get('author') == username]
+        print(f"Caricamento post da {posts_file}...")
+        posts = self.load_data(posts_file)
         
-        # Convert to DataFrame
-        comments_df = pd.DataFrame(user_comments)
-        posts_df = pd.DataFrame(user_posts)
+        user_posts = posts.filter(pl.col('author') == username)
+        user_posts = user_posts.with_columns(pl.lit('post').alias('type'))
         
-        # Add type column
-        if not comments_df.empty:
-            comments_df['type'] = 'comment'
-        if not posts_df.empty:
-            posts_df['type'] = 'post'
+        # Combina (solo colonne comuni)
+        user_data = pl.concat([
+            user_comments,
+            user_posts
+        ],how='diagonal')
         
-        # Combine
-        user_data = pd.concat([comments_df, posts_df], ignore_index=True)
-        
-        print(f"Extracted {len(user_comments)} comments and {len(user_posts)} posts")
+        print(f"Estratti {len(user_comments)} commenti e {len(user_posts)} post")
         return user_data
     
-    def extract_multiple_users(self, usernames: List[str],
+    def extract_multiple_users(self,
+                               usernames: List[str],
                                comments_file: str = "comments.jsonl",
                                posts_file: str = "submissions.jsonl",
-                               min_comments_per_user: int = 100) -> Dict[str, pd.DataFrame]:
+                               min_comments_per_user: int = 100) -> Dict[str, pl.DataFrame]:
         """
-        Extract data for multiple users
-        
-        Args:
-            usernames: List of usernames to extract
-            comments_file: Path to comments JSONL
-            posts_file: Path to posts JSONL
-            min_comments_per_user: Minimum comments required per user
-            
-        Returns:
-            Dictionary mapping username to their data
+        Estrae dati per utenti multipli (versione Polars)
         """
         users_data = {}
+        
+        # Carica una sola volta
+        # print("Caricamento dati completi...")
+        # comments = self.load_data(comments_file)
+        # posts = self.load_data(posts_file)
         
         for username in usernames:
             print(f"\n{'='*60}")
             print(f"Processing user: {username}")
             print('='*60)
             
-            user_data = self.extract_user_data(username, comments_file, posts_file)
-            
-            if len(user_data) < min_comments_per_user:
-                print(f"   Warning: User {username} has only {len(user_data)} items (min: {min_comments_per_user})")
-                print(f"   Skipping {username}")
-                continue
+            # Filtra per utente
+            user_data = self.extract_user_data(username,comments_file,posts_file)
             
             users_data[username] = user_data
             print(f"✓ Added {username} with {len(user_data)} items")
@@ -144,67 +87,122 @@ class RedditDataExtractor:
         
         return users_data
     
-    def save_multi_user_data(self, users_data: Dict[str, pd.DataFrame], 
+    def save_processed_data(self, data: pl.DataFrame, output_path: str):
+        """
+        Salva dati processati come JSONL o Parquet
+        """
+        output_file = Path(output_path)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        if output_file.suffix == '.parquet':
+            data.write_parquet(output_path, compression='snappy')
+        elif output_file.suffix == '.jsonl':
+            data.write_ndjson(output_path)
+        else:
+            # Default: JSONL per compatibilità
+            data.write_ndjson(output_path)
+        
+        print(f"Salvati dati in {output_path}")
+    
+    def save_multi_user_data(self, 
+                            users_data: Dict[str, pl.DataFrame],
                             output_dir: str = "data/processed"):
-        """Save multi-user data with metadata"""
+        """
+        Salva dati multi-utente
+        """
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
         
-        # Save each user's data
+        # Salva ogni utente
         for username, data in users_data.items():
-            user_file = output_path / f"{username}_data.jsonl"
-            data.to_json(user_file, orient='records', lines=True)
+            user_file = output_path / f"{username}_data.parquet"
+            data.write_parquet(user_file, compression='snappy')
             print(f"Saved {username}: {user_file}")
         
-        # Save metadata
+        # Metadata
+        import json
         metadata = {
             'users': list(users_data.keys()),
             'user_stats': {
                 username: {
                     'total_items': len(data),
-                    'comments': len(data[data['type'] == 'comment']),
-                    'posts': len(data[data['type'] == 'post'])
+                    'comments': len(data.filter(pl.col('type') == 'comment')),
+                    'posts': len(data.filter(pl.col('type') == 'post'))
                 }
                 for username, data in users_data.items()
             }
         }
         
-        import json
         metadata_file = output_path / "users_metadata.json"
         with open(metadata_file, 'w') as f:
             json.dump(metadata, f, indent=2)
         
         print(f"\nMetadata saved: {metadata_file}")
+    # OPTIMIZE THIS
+
+    # def build_conversation_threads(self, all_data: pl.DataFrame) -> Dict:
+    #     """
+    #     Costruisce thread conversazioni (versione Polars)
+    #     """
+    #     # Converti a dizionari per lookup veloce
+    #     comments = all_data.filter(
+    #          pl.col('parent_id').is_not_null() #(pl.col('type') == 'comment') | need to find better way
+    #     )
+        
+    #     comments_by_id = {
+    #         row['id']: row 
+    #         for row in comments.to_dicts()
+    #     }
+        
+    #     comments_by_parent = {}
+    #     for row in comments.to_dicts():
+    #         parent_id = row.get('parent_id', '').split('_')[-1]
+    #         if parent_id not in comments_by_parent:
+    #             comments_by_parent[parent_id] = []
+    #         comments_by_parent[parent_id].append(row)
+        
+    #     posts = all_data.filter(pl.col('type') == 'post')
+    #     posts_by_id = {
+    #         row['id']: row 
+    #         for row in posts.to_dicts()
+    #     }
+        
+    #     return {
+    #         'comments_by_id': comments_by_id,
+    #         'comments_by_parent': comments_by_parent,
+    #         'posts_by_id': posts_by_id
+    #     }
     
-    def build_conversation_threads(self, all_data: List[Dict]) -> Dict[str, List[Dict]]:
-        """Build conversation threads from all subreddit data"""
-        
-        # Create lookup dictionaries
-        comments_by_id = {}
-        comments_by_parent = {}
-        posts_by_id = {}
-        
-        for item in all_data:
-            item_id = item.get('id') or item.get('name', '').split('_')[-1]
+    def build_conversation_threads(self, all_data_pl: pl.DataFrame) -> Dict[str, List[Dict]]:
+            """Build conversation threads from all subreddit data"""
             
-            if item.get('type') == 'comment' or 'parent_id' in item:
-                comments_by_id[item_id] = item
-                pid = item.get('parent_id', '')
-                try:
-                    parent_id = pid.split('_')[-1]
-                except:
-                    print(f"Error processign {item}")
-                if parent_id not in comments_by_parent:
-                    comments_by_parent[parent_id] = []
-                comments_by_parent[parent_id].append(item)
-            else:
-                posts_by_id[item_id] = item
-        
-        return {
-            'comments_by_id': comments_by_id,
-            'comments_by_parent': comments_by_parent,
-            'posts_by_id': posts_by_id
-        }
+            all_data = all_data_pl.to_dicts()
+            # Create lookup dictionaries
+            comments_by_id = {}
+            comments_by_parent = {}
+            posts_by_id = {}
+            
+            for item in all_data:
+                item_id = item.get('id') or item.get('name', '').split('_')[-1]
+                
+                if item.get('type') == 'comment' or 'parent_id' in item:
+                    comments_by_id[item_id] = item
+                    pid = item.get('parent_id', '')
+                    try:
+                        parent_id = pid.split('_')[-1]
+                    except:
+                        print(f"Error processign {item}")
+                    if parent_id not in comments_by_parent:
+                        comments_by_parent[parent_id] = []
+                    comments_by_parent[parent_id].append(item)
+                else:
+                    posts_by_id[item_id] = item
+            
+            return {
+                'comments_by_id': comments_by_id,
+                'comments_by_parent': comments_by_parent,
+                'posts_by_id': posts_by_id
+            }
     
     def get_context_for_comment(self, comment: Dict, thread_data: Dict, 
                                 max_context: int = 5) -> List[Dict]:
@@ -231,11 +229,11 @@ class RedditDataExtractor:
         
         return context
     
-    def save_processed_data(self, data: pd.DataFrame, output_path: str):
-        """Save processed data"""
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        data.to_json(output_path, orient='records', lines=True)
-        print(f"Saved to {output_path}")
+    # def save_processed_data(self, data: pl.DataFrame, output_path: str):
+    #     """Save processed data"""
+    #     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    #     data.to_json(output_path, orient='records', lines=True)
+    #     print(f"Saved to {output_path}")
 
 def data_extraction_parser():
     parser = ArgumentParser(description="Data extraction module",
@@ -250,7 +248,8 @@ def data_extraction_parser():
     parser.add_argument("--submissions","-s", required=False, default="submissions.jsonl", help="Submissison data")
     parser.add_argument("--multi-user", action="store_true", 
                        help="Enable multi-user mode")
-    
+    parser.add_argument("--users", nargs="+", type= str,
+                       help="users to extract")
 
     return parser
     
@@ -261,16 +260,20 @@ if __name__ == "__main__":
     args = parser.parse_args()
     submission_data_file = args.submissions
     comments_data_file = args.comments
+    users = args.users
 
     multi_user:bool = args.multi_user
     extractor = RedditDataExtractor("data/raw")
     if not multi_user:
+        target_username = users[0]
+        if len(users) > 1:
+            import warnings
+            warnings.warn(f"No multi user option selected, processing only  {target_username}")
         
-        user_data = extractor.extract_user_data("target_username",comments_data_file,submission_data_file)
+        user_data = extractor.extract_user_data(target_username,comments_data_file,submission_data_file)
         extractor.save_processed_data(user_data, "data/processed/user_data.jsonl")
     else:
         # Example usage - Multiple users
-        users = ["user1", "user2", "user3"]
         users_data = extractor.extract_multiple_users(
             usernames=users,
             min_comments_per_user=100,

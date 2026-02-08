@@ -72,10 +72,10 @@ class PipelineRunner:
         
         # Load all comments for context
         all_comments = []
-        comments_path = f"{config['raw_dir']}/{config.get("comments_filename","comments.jsonl")}"
+        comments_path = f"{config.get("comments_filename","comments.jsonl")}"
 
-        extractor = RedditDataExtractor('data/raw')
-        all_comments = extractor._load_reddit_data_file(comments_path)
+        extractor = RedditDataExtractor(config['raw_dir'])
+        all_comments = extractor.load_data(comments_path)
 
         # Filter quality
         user_data = preprocessor.filter_quality(user_data)
