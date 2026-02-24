@@ -475,3 +475,5 @@ config.prod.yaml
 # 
 # To forcefully add an ignored file (use carefully):
 # git add -f filename
+
+.claude

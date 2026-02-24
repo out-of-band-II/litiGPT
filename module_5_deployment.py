@@ -7,7 +7,7 @@ import praw
 import time
 import logging
 from datetime import datetime
-from typing import Optional, Set
+from typing import Optional, Set,List
 import os
 from dotenv import load_dotenv
 
@@ -34,9 +34,10 @@ class RedditBot:
                  reply_probability: float = 0.3,
                  min_score_threshold: int = 1,
                  cooldown_seconds: int = 60,
-                 multi_user: bool = False,
-                 available_users: Optional[List[str]] = None,
-                 user_classifier_path: Optional[str] = None):
+                 multi_user: bool = False, # should be coherent with training data/settings
+                 available_users: Optional[List[str]] = None, # should be coherent with training data/settings
+                 user_classifier_path: Optional[str] = None,
+                 max_depth = 3): # should be coherent with training data/settings
         """
         Initialize Reddit bot
         
@@ -90,6 +91,7 @@ class RedditBot:
         # Track processed comments
         self.processed_ids: Set[str] = set()
         self.last_reply_time = 0
+        self.max_depth = max_depth
         
         logging.info(f"Bot initialized for r/{subreddit_name}")
         if multi_user:
@@ -146,11 +148,12 @@ class RedditBot:
         
         return True
     
-    def get_comment_context(self, comment, max_depth: int = 3) -> str:
+    def get_comment_context(self, comment) -> str:
         """Build conversation context from comment thread"""
         
         context_parts = []
         current = comment
+        max_depth = self.max_depth
         
         # Get parent comments
         for _ in range(max_depth):
@@ -326,7 +329,7 @@ if __name__ == "__main__":
         model_path="models/reddit_bot_lora",
         base_model="meta-llama/Llama-3.1-8B-Instruct",
         subreddit_name="test",
-        bot_username="your_bot_username",
+        bot_username="litiGPT",
         trigger_keywords=None,
         reply_probability=0.2,
         min_score_threshold=1,

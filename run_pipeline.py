@@ -38,8 +38,8 @@ class PipelineRunner:
         # Extract user data
         user_data = extractor.extract_user_data(
             username=config['target_username'],
-            comments_file=config.get("comments_filename","comments.jsonl"),
-            posts_file=config.get("comments_filename","submissions.jsonl")
+            comments_file=config.get("comments_filename", "comments.jsonl"),
+            posts_file=config.get("submission_filename", "submissions.jsonl")
         )
         
         # Save
@@ -55,25 +55,23 @@ class PipelineRunner:
         print("\n[2/5] PREPROCESSING DATA")
         print("-" * 60)
         
-        import pandas as pd
-        import jsonlines
-        
+        import polars as pl
+
         config = self.config['data']
         preprocessor = RedditDataPreprocessor(
             min_length=config['min_comment_length'],
             max_length=config['max_comment_length']
         )
-        
-        # Load user data
-        user_data = pd.read_json(
-            f"{config['processed_dir']}/user_data.jsonl",
-            lines=True
-        )
-        
-        # Load all comments for context
-        all_comments = []
-        comments_path = f"{config.get("comments_filename","comments.jsonl")}"
 
+        # Load user data (Polars)
+        processed_file = Path(f"{config['processed_dir']}/user_data.jsonl")
+        if processed_file.suffix == '.parquet':
+            user_data = pl.read_parquet(str(processed_file))
+        else:
+            user_data = pl.read_ndjson(str(processed_file), infer_schema_length=None)
+
+        # Load all comments for context
+        comments_path = config.get("comments_filename", "comments.jsonl")
         extractor = RedditDataExtractor(config['raw_dir'])
         all_comments = extractor.load_data(comments_path)
 
