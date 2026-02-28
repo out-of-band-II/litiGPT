@@ -9,11 +9,11 @@ from pathlib import Path
 import sys
 
 # Import all modules
-from module_1_data_extraction import RedditDataExtractor
-from module_2_preprocessing import RedditDataPreprocessor
-from module_3_training import RedditModelTrainer
-from module_4_inference import RedditBotInference
-from module_5_deployment import RedditBot
+from litigpt.data.extraction import RedditDataExtractor
+from litigpt.data.preprocessing import RedditDataPreprocessor
+from litigpt.training.trainer import RedditModelTrainer
+from litigpt.inference.generator import RedditBotInference
+from litigpt.deployment.reddit_bot import RedditBot
 
 class PipelineRunner:
     def __init__(self, config_path: str = "config.yaml"):

@@ -210,7 +210,7 @@ class RedditModelTrainer:
 
 if __name__ == "__main__":
     # Example usage with MLflow tracking
-    from module_8_mlflow_tracking import MLflowTracker
+    from litigpt.training.tracking import MLflowTracker
     import yaml
     
     # Load config

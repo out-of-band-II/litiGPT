@@ -43,14 +43,14 @@ python launch_chat.py --model models/reddit_bot_lora --share
 
 **Gradio:**
 ```bash
-python module_9_gradio_interface.py \
+python -m litigpt.interface.gradio_app \
   --model models/reddit_bot_lora \
   --base-model meta-llama/Llama-3.1-8B-Instruct
 ```
 
 **Ollama:**
 ```bash
-python module_10_ollama_interface.py \
+python -m litigpt.interface.ollama \
   --model models/reddit_bot_lora \
   --base-model meta-llama/Llama-3.1-8B-Instruct
 ```
@@ -168,7 +168,7 @@ In the UI:
 
 ### Custom System Prompt
 
-Edit the code in `module_9_gradio_interface.py` or `module_10_ollama_interface.py`:
+Edit the code in `litigpt/interface/gradio_app.py` or `litigpt/interface/ollama.py`:
 
 ```python
 system_prompt = f"You are {username}. Your custom instructions here."
@@ -177,7 +177,7 @@ system_prompt = f"You are {username}. Your custom instructions here."
 ### Add Authentication (Ollama)
 
 ```python
-# In module_10_ollama_interface.py
+# In litigpt/interface/ollama.py
 @app.before_request
 def require_password():
     password = request.headers.get('X-Password')
@@ -205,7 +205,7 @@ response = requests.post('http://localhost:5000/api/chat', json={
 ### Python Integration
 
 ```python
-from module_9_gradio_interface import GradioChatInterface
+from litigpt.interface.gradio_app import GradioChatInterface
 
 bot = GradioChatInterface(
     model_path="models/reddit_bot_lora",

@@ -10,7 +10,7 @@ This file provides context for Claude (or other AI assistants) working on this R
 
 ## Project Architecture
 
-### Core Pipeline (7 Main Modules)
+### Core Pipeline
 
 ```
 Data (JSONL) → Extract → Preprocess → Train → Evaluate → Deploy
@@ -18,55 +18,43 @@ Data (JSONL) → Extract → Preprocess → Train → Evaluate → Deploy
                                     MLflow Tracking
 ```
 
-1. **Module 1** (`module_1_data_extraction.py`): Extract user comments/posts from Reddit JSONL
-   - Single user: `extract_user_data(username)`
-   - Multi-user: `extract_multiple_users(usernames)`
-   
-2. **Module 2** (`module_2_preprocessing.py`): Clean, build context, format for training
-   - Creates conversation pairs with 3-5 parent comments as context
-   - Multi-user: Tags each pair with username
-   
-3. **Module 3** (`module_3_training.py`): Fine-tune with QLoRA (memory-efficient)
-   - Uses 4-bit quantization + LoRA adapters
-   - Default: Llama 3.1 8B Instruct
-   
-4. **Module 4** (`module_4_inference.py`): Generate responses
-   - Single-user: `generate_response(context)`
-   - Multi-user: `generate_as_user(context, username)`
-   
-5. **Module 5** (`module_5_deployment.py`): Deploy to Reddit
-   - Monitors subreddit, filters comments, posts replies
-   - Multi-user: Auto-selects personality via classifier
-   
-6. **Module 6** (`module_6_config_setup.py`): Configuration and environment
-   
-7. **Module 7** (`run_pipeline.py`): Orchestrates entire workflow
+All source code lives in the `litigpt/` package, organized by function:
 
-### Extended Modules
+1. **Data** (`litigpt/data/`):
+   - `extraction.py`: Extract user comments/posts from Reddit JSONL
+   - `preprocessing.py`: Clean, build context, format for training
+   - `preliminary.py`: Raw data conversion utilities (zstd → parquet)
 
-8. **Module 8** (`module_8_mlflow_tracking.py`): Experiment tracking
-   - Logs parameters, metrics, models
-   - Compare runs, load best model
-   
-9. **Module 13** (`module_13_user_classifier.py`): Multi-user personality selection ⭐
-   - **TF-IDF Classifier**: Statistical similarity matching
-   - **Keyword Selector**: Topic-based routing
-   - **Hybrid**: Combines both methods
+2. **Training** (`litigpt/training/`):
+   - `trainer.py`: Fine-tune with QLoRA (4-bit quantization + LoRA adapters)
+   - `tracking.py`: MLflow experiment tracking (logs params, metrics, models)
+
+3. **Inference** (`litigpt/inference/`):
+   - `generator.py`: Generate responses (single-user and multi-user)
+   - `classifier.py`: Multi-user personality selection (TF-IDF, Keywords, Hybrid)
+
+4. **Deployment** (`litigpt/deployment/`):
+   - `reddit_bot.py`: Deploy to Reddit (monitors subreddit, auto-selects personality)
+   - `cloud.py`: Cloud deployment (AWS ECS, Google Cloud Run, Kubernetes)
+
+5. **Interface** (`litigpt/interface/`):
+   - `gradio_app.py`: Gradio chat UI
+   - `ollama.py`: Ollama-compatible API server
+
+6. **Config & Pipeline**:
+   - `litigpt/config.py`: Configuration and environment setup
+   - `litigpt/pipeline.py`: Orchestrates entire workflow
 
 ### Infrastructure
 
-10. **Docker**: Separate containers for training (GPU) and deployment (CPU)
-    - `Dockerfile.training`: CUDA + training dependencies
-    - `Dockerfile.bot`: Lightweight inference container
-    - `docker-compose.yml`: Orchestrates MLflow + Training + Bot
-    
-11. **Cloud Deployment** (`module_12_cloud_deployment.py`):
-    - AWS ECS, Google Cloud Run, Kubernetes configs
-    - RunPod training scripts
-    
-12. **Cloud GPU Training**: Google Colab & Kaggle templates
-    - `colab_training.ipynb`: 13-cell complete pipeline
-    - `kaggle_training.py`: All-in-one Kaggle script
+- **Docker**: Separate containers for training (GPU) and deployment (CPU)
+  - `Dockerfile.training`: CUDA + training dependencies
+  - `Dockerfile.bot`: Lightweight inference container
+  - `docker_compose.yaml`: Orchestrates MLflow + Training + Bot
+
+- **Cloud GPU Training**: Google Colab & Kaggle templates
+  - `colab_training.ipynb`: 13-cell complete pipeline
+  - `kaggle_training.py`: All-in-one Kaggle script
 
 ## Key Technical Details
 
@@ -118,18 +106,22 @@ reddit-chatbot/
 ├── data/
 │   ├── raw/                    # Input JSONL files
 │   ├── processed/              # Extracted user data
-│   │   ├── user1_data.jsonl
-│   │   ├── user2_data.jsonl
-│   │   └── users_metadata.json
 │   └── training/               # Formatted for training
-│       ├── train.jsonl
-│       └── val.jsonl
 ├── models/
 │   ├── reddit_bot_lora/        # LoRA adapters
 │   └── user_classifier.pkl     # Multi-user classifier
-├── module_*.py                 # Core modules
-├── Dockerfile.*
-├── docker-compose.yml
+├── litigpt/                    # Main package
+│   ├── data/                   # Extraction & preprocessing
+│   ├── training/               # Fine-tuning & MLflow tracking
+│   ├── inference/              # Generation & classification
+│   ├── deployment/             # Reddit bot & cloud deployment
+│   ├── interface/              # Gradio & Ollama chat UIs
+│   ├── config.py               # Configuration setup
+│   └── pipeline.py             # Pipeline orchestrator
+├── launch_chat.py              # Quick-launch script
+├── Dockerfile.training
+├── Dockerfile.bot
+├── docker_compose.yaml
 ├── config.yaml
 └── .env                        # Secrets (not committed)
 ```
@@ -166,10 +158,9 @@ bot:
 ### For Claude: Helping with Code Issues
 
 **Module Dependencies:**
-- Module 1 → Module 2 → Module 3 (training)
-- Module 1 → Module 13 (classifier)
-- Module 4 uses Module 13 (multi-user)
-- Module 5 uses Modules 4 & 13
+- `data.extraction` → `data.preprocessing` → `training.trainer`
+- `inference.classifier` (standalone, uses processed data)
+- `deployment.reddit_bot` uses `inference.generator` & `inference.classifier`
 
 **When debugging:**
 1. Check which mode (single vs multi-user)
@@ -186,15 +177,15 @@ bot:
 ### For Claude: Adding Features
 
 **To add a new user selection method:**
-1. Create new class in `module_13_user_classifier.py`
+1. Create new class in `litigpt/inference/classifier.py`
 2. Implement `predict_user(context) -> str` method
 3. Update `HybridUserSelector` to include it
 4. Add config option in `config.yaml`
 
 **To add a new deployment target:**
-1. Add deployment class in `module_12_cloud_deployment.py`
+1. Add deployment class in `litigpt/deployment/cloud.py`
 2. Follow pattern: `create_*`, `deploy_*` methods
-3. Add example in `DEPLOYMENT_GUIDE.md`
+3. Add example in `deployment_guide.md`
 
 **To support a new base model:**
 1. Add to `config.yaml` model options
@@ -207,7 +198,7 @@ bot:
 ### Naming Conventions
 - **Classes**: PascalCase (`RedditDataExtractor`)
 - **Functions**: snake_case (`extract_user_data`)
-- **Files**: snake_case with module number (`module_1_data_extraction.py`)
+- **Packages**: snake_case organized by function (`litigpt/data/extraction.py`)
 - **Config keys**: snake_case nested dicts
 
 ### Error Handling
@@ -373,7 +364,7 @@ MLFLOW_TRACKING_URI=...       # Optional: http://localhost:5000
 When asked about this project:
 
 1. **Check context**: Single-user or multi-user mode?
-2. **Reference correct module**: Map task to module number
+2. **Reference correct module**: Map task to package (data/, training/, inference/, deployment/)
 3. **Consider deployment**: Local, Docker, or cloud?
 4. **Check docs**: Point to relevant .md file
 5. **Provide examples**: Use code from existing modules
@@ -383,23 +374,23 @@ When asked about this project:
 ## Quick Commands Reference
 
 ```bash
-# Extract (single)
-python module_1_data_extraction.py
-
-# Extract (multi)
-python -c "from module_1_data_extraction import *; ..."
-
-# Train
-python module_3_training.py
-
-# Build classifier
-python module_13_user_classifier.py
-
-# Deploy
-python module_5_deployment.py
-
 # Full pipeline
-python run_pipeline.py --step all
+python -m litigpt.pipeline --step all
+
+# Individual steps
+python -m litigpt.pipeline --step extract
+python -m litigpt.pipeline --step preprocess
+python -m litigpt.pipeline --step train
+python -m litigpt.pipeline --step deploy
+
+# Run individual modules directly
+python -m litigpt.training.trainer
+python -m litigpt.inference.classifier
+python -m litigpt.deployment.reddit_bot
+
+# Chat interfaces
+python launch_chat.py --model models/reddit_bot_lora
+python launch_chat.py --interface ollama --model models/reddit_bot_lora
 
 # Docker
 docker-compose --profile training run --rm training
@@ -455,4 +446,4 @@ For issues:
 
 **For Claude**: This project is well-structured with clear separation of concerns. Each module is self-contained. When helping users, focus on their specific use case (single vs multi-user, local vs cloud) and point them to the relevant documentation. The codebase is modular and extensible - encourage users to build on existing patterns rather than rewriting core functionality.
 
-**Last Updated**: January 2025
+**Last Updated**: February 2026

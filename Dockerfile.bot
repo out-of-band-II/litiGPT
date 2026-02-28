@@ -38,10 +38,8 @@ RUN pip install \
 # Set working directory
 WORKDIR /app
 
-# Copy bot modules
-COPY module_4_inference.py .
-COPY module_5_deployment.py .
-COPY module_13_user_classifier.py .
+# Copy package and config
+COPY litigpt/ litigpt/
 COPY config.yaml .
 
 # Create necessary directories
@@ -52,7 +50,7 @@ HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
     CMD python -c "import praw; import transformers" || exit 1
 
 # Run bot
-CMD ["python", "module_5_deployment.py"]
+CMD ["python", "-m", "litigpt.deployment.reddit_bot"]
 
 # Build command:
 # docker build -f Dockerfile.bot -t reddit-chatbot-bot:latest .

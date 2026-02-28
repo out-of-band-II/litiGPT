@@ -40,7 +40,7 @@ pip install torch transformers peft bitsandbytes pyyaml
 
 **Single-user bot:**
 ```bash
-python module_9_gradio_interface.py \
+python -m litigpt.interface.gradio_app \
   --model models/reddit_bot_lora \
   --base-model meta-llama/Llama-3.1-8B-Instruct \
   --config config.yaml
@@ -48,7 +48,7 @@ python module_9_gradio_interface.py \
 
 **Multi-user bot:**
 ```bash
-python module_9_gradio_interface.py \
+python -m litigpt.interface.gradio_app \
   --model models/reddit_bot_lora \
   --base-model meta-llama/Llama-3.1-8B-Instruct \
   --config config.yaml \
@@ -57,7 +57,7 @@ python module_9_gradio_interface.py \
 
 **With public sharing:**
 ```bash
-python module_9_gradio_interface.py \
+python -m litigpt.interface.gradio_app \
   --model models/reddit_bot_lora \
   --base-model meta-llama/Llama-3.1-8B-Instruct \
   --share
@@ -65,7 +65,7 @@ python module_9_gradio_interface.py \
 
 **Custom port:**
 ```bash
-python module_9_gradio_interface.py \
+python -m litigpt.interface.gradio_app \
   --model models/reddit_bot_lora \
   --base-model meta-llama/Llama-3.1-8B-Instruct \
   --port 8080
@@ -117,14 +117,14 @@ python module_9_gradio_interface.py \
 
 **Basic:**
 ```bash
-python module_10_ollama_interface.py \
+python -m litigpt.interface.ollama \
   --model models/reddit_bot_lora \
   --base-model meta-llama/Llama-3.1-8B-Instruct
 ```
 
 **Multi-user:**
 ```bash
-python module_10_ollama_interface.py \
+python -m litigpt.interface.ollama \
   --model models/reddit_bot_lora \
   --base-model meta-llama/Llama-3.1-8B-Instruct \
   --multi-user
@@ -132,7 +132,7 @@ python module_10_ollama_interface.py \
 
 **Custom host/port:**
 ```bash
-python module_10_ollama_interface.py \
+python -m litigpt.interface.ollama \
   --model models/reddit_bot_lora \
   --base-model meta-llama/Llama-3.1-8B-Instruct \
   --host 0.0.0.0 \
@@ -199,7 +199,7 @@ The metadata file is automatically created when using `extract_multiple_users()`
 
 ### Custom Styling (Ollama-Style)
 
-Edit the CSS in `module_10_ollama_interface.py`:
+Edit the CSS in `litigpt/interface/ollama.py`:
 
 ```python
 # Change colors
@@ -247,14 +247,14 @@ curl http://localhost:5000/api/info
 
 **Gradio:**
 ```bash
-python module_9_gradio_interface.py \
+python -m litigpt.interface.gradio_app \
   --model models/reddit_bot_lora \
   --port 7860
 ```
 
 **Ollama:**
 ```bash
-python module_10_ollama_interface.py \
+python -m litigpt.interface.ollama \
   --model models/reddit_bot_lora \
   --host 0.0.0.0 \
   --port 5000
@@ -266,7 +266,7 @@ Access from other devices: `http://your-local-ip:port`
 
 **Gradio (easiest):**
 ```bash
-python module_9_gradio_interface.py \
+python -m litigpt.interface.gradio_app \
   --model models/reddit_bot_lora \
   --share
 ```
@@ -294,8 +294,8 @@ RUN pip install torch transformers peft bitsandbytes \
     flask gradio pyyaml
 
 # Copy files
-COPY module_9_gradio_interface.py .
-COPY module_10_ollama_interface.py .
+COPY litigpt/interface/gradio_app.py .
+COPY litigpt/interface/ollama.py .
 COPY config.yaml .
 COPY models/ models/
 
@@ -303,7 +303,7 @@ COPY models/ models/
 EXPOSE 7860 5000
 
 # Default to Gradio
-CMD ["python", "module_9_gradio_interface.py", \
+CMD ["python", "-m", "litigpt.interface.gradio_app", \
      "--model", "models/reddit_bot_lora", \
      "--port", "7860"]
 ```
@@ -317,7 +317,7 @@ docker run -p 7860:7860 reddit-bot-chat
 
 # Ollama
 docker run -p 5000:5000 reddit-bot-chat \
-  python module_10_ollama_interface.py \
+  python -m litigpt.interface.ollama \
   --model models/reddit_bot_lora \
   --host 0.0.0.0
 ```
@@ -332,7 +332,7 @@ docker run -p 5000:5000 reddit-bot-chat \
 ```bash
 # Use smaller batch size during loading
 # Or use CPU (slow)
-CUDA_VISIBLE_DEVICES="" python module_9_gradio_interface.py ...
+CUDA_VISIBLE_DEVICES="" python -m litigpt.interface.gradio_app ...
 ```
 
 **Model not found:**
@@ -349,12 +349,12 @@ ls models/reddit_bot_lora/
 
 **Gradio:**
 ```bash
-python module_9_gradio_interface.py --port 7861
+python -m litigpt.interface.gradio_app --port 7861
 ```
 
 **Ollama:**
 ```bash
-python module_10_ollama_interface.py --port 5001
+python -m litigpt.interface.ollama --port 5001
 ```
 
 ### Slow Response Generation
@@ -408,7 +408,7 @@ bnb_config = BitsAndBytesConfig(
 For multiple simultaneous users:
 
 ```python
-# In module_10_ollama_interface.py
+# In litigpt/interface/ollama.py
 # Increase worker threads
 if __name__ == "__main__":
     from werkzeug.serving import run_simple
@@ -434,7 +434,7 @@ outputs = self.model.generate(
 
 ### Rate Limiting (Ollama)
 
-Add to `module_10_ollama_interface.py`:
+Add to `litigpt/interface/ollama.py`:
 
 ```python
 from flask_limiter import Limiter

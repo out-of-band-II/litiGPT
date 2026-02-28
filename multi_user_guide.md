@@ -112,7 +112,7 @@ bot:
 ### 2. Extract User Data
 
 ```python
-from module_1_data_extraction import RedditDataExtractor
+from litigpt.data.extraction import RedditDataExtractor
 
 extractor = RedditDataExtractor("data/raw")
 
@@ -129,7 +129,7 @@ extractor.save_multi_user_data(users_data, "data/processed")
 Or use the pipeline:
 
 ```bash
-python run_pipeline.py --step extract
+python -m litigpt.pipeline --step extract
 ```
 
 ---
@@ -139,7 +139,7 @@ python run_pipeline.py --step extract
 ### 1. Preprocess Multi-User Data
 
 ```python
-from module_2_preprocessing import RedditDataPreprocessor
+from litigpt.data.preprocessing import RedditDataPreprocessor
 import pandas as pd
 import jsonlines
 import json
@@ -179,7 +179,7 @@ preprocessor.save_training_data(train, val)
 Training works the same way, but now the model learns multiple personalities:
 
 ```bash
-python module_3_training.py
+python -m litigpt.training.trainer
 ```
 
 The system prompts will vary:
@@ -192,7 +192,7 @@ The system prompts will vary:
 After training, build the classifier for automatic user selection:
 
 ```python
-from module_13_user_classifier import build_user_classifier_from_data
+from litigpt.inference.classifier import build_user_classifier_from_data
 
 # Build classifier
 classifier = build_user_classifier_from_data("data/processed")
@@ -205,7 +205,7 @@ Or use the pipeline:
 
 ```bash
 python -c "
-from module_13_user_classifier import build_user_classifier_from_data
+from litigpt.inference.classifier import build_user_classifier_from_data
 classifier = build_user_classifier_from_data('data/processed')
 classifier.save_profiles('models/user_classifier.pkl')
 "
@@ -220,7 +220,7 @@ classifier.save_profiles('models/user_classifier.pkl')
 **Best for:** General use, works well across diverse users
 
 ```python
-from module_13_user_classifier import UserClassifier
+from litigpt.inference.classifier import UserClassifier
 
 classifier = UserClassifier()
 classifier.load_profiles("models/user_classifier.pkl")
@@ -246,7 +246,7 @@ Top matches:
 **Best for:** Topic-specific routing, clear user domains
 
 ```python
-from module_13_user_classifier import KeywordUserSelector
+from litigpt.inference.classifier import KeywordUserSelector
 
 selector = KeywordUserSelector({
     'alice_tech': ['python', 'javascript', 'api', 'coding', 'ml'],
@@ -264,7 +264,7 @@ print(f"Selected: {user}")  # charlie_fitness
 **Best for:** Maximum accuracy, combines both methods
 
 ```python
-from module_13_user_classifier import HybridUserSelector
+from litigpt.inference.classifier import HybridUserSelector
 
 hybrid = HybridUserSelector(
     tfidf_classifier=classifier,
@@ -285,7 +285,7 @@ print(f"Confidence: {result['confidence']:.3f}")
 ### Single Response
 
 ```python
-from module_4_inference import RedditBotInference
+from litigpt.inference.generator import RedditBotInference
 
 bot = RedditBotInference(
     model_path="models/reddit_bot_lora",
@@ -304,7 +304,7 @@ print(f"As alice_tech: {response}")
 ### Automatic User Selection
 
 ```python
-from module_13_user_classifier import UserClassifier
+from litigpt.inference.classifier import UserClassifier
 
 # Load classifier
 classifier = UserClassifier()
@@ -328,7 +328,7 @@ print(f"Selected {predicted_user}: {response}")
 ### Full Bot Deployment
 
 ```python
-from module_5_deployment import RedditBot
+from litigpt.deployment.reddit_bot import RedditBot
 
 bot = RedditBot(
     model_path="models/reddit_bot_lora",
@@ -410,7 +410,7 @@ and getting rest days. Push for 245 next!
 Test different users interactively:
 
 ```python
-from module_4_inference import RedditBotInference
+from litigpt.inference.generator import RedditBotInference
 
 bot = RedditBotInference(
     model_path="models/reddit_bot_lora",
@@ -447,7 +447,7 @@ Bot: [response in bob's style]
 
 ```python
 # Check user profile separation
-from module_13_user_classifier import UserClassifier
+from litigpt.inference.classifier import UserClassifier
 
 classifier = UserClassifier()
 classifier.load_profiles("models/user_classifier.pkl")

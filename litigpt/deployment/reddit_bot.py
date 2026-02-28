@@ -12,7 +12,7 @@ import os
 from dotenv import load_dotenv
 
 # Import inference module
-from module_4_inference import RedditBotInference
+from litigpt.inference.generator import RedditBotInference
 
 # Setup logging
 logging.basicConfig(
@@ -77,7 +77,7 @@ class RedditBot:
         self.user_classifier = None
         
         if multi_user and user_classifier_path:
-            from module_13_user_classifier import UserClassifier
+            from litigpt.inference.classifier import UserClassifier
             self.user_classifier = UserClassifier()
             self.user_classifier.load_profiles(user_classifier_path)
             logging.info(f"Loaded user classifier for: {self.available_users}")

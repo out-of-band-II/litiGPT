@@ -111,13 +111,13 @@ with open('config.yaml', 'w') as f:
 
 **Cell 5: Extract Data**
 ```python
-%%writefile module_1_data_extraction.py
+%%writefile litigpt/data/extraction.py
 # Paste entire Module 1 code here
-# [Copy from your module_1_data_extraction.py]
+# [Copy from your litigpt/data/extraction.py]
 
 # Run extraction
 !python -c "
-from module_1_data_extraction import RedditDataExtractor
+from litigpt.data.extraction import RedditDataExtractor
 extractor = RedditDataExtractor('data/raw')
 user_data = extractor.extract_user_data('your_username')
 extractor.save_processed_data(user_data, 'data/processed/user_data.jsonl')
@@ -127,14 +127,14 @@ print(f'Extracted {len(user_data)} items')
 
 **Cell 6: Preprocess**
 ```python
-%%writefile module_2_preprocessing.py
+%%writefile litigpt/data/preprocessing.py
 # Paste entire Module 2 code here
 
 # Run preprocessing
 !python -c "
 import pandas as pd
 import jsonlines
-from module_2_preprocessing import RedditDataPreprocessor
+from litigpt.data.preprocessing import RedditDataPreprocessor
 
 preprocessor = RedditDataPreprocessor()
 user_data = pd.read_json('data/processed/user_data.jsonl', lines=True)
@@ -156,11 +156,11 @@ print(f'Training samples: {len(train)}, Validation: {len(val)}')
 
 **Cell 7: Train Model**
 ```python
-%%writefile module_3_training.py
+%%writefile litigpt/training/trainer.py
 # Paste entire Module 3 code here
 
 # Run training
-!python module_3_training.py
+!python -m litigpt.training.trainer
 ```
 
 **Cell 8: Monitor Training**
@@ -216,9 +216,9 @@ if torch.cuda.is_available():
     print(f"Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
 
 # Import modules (paste module code above this, or import from files)
-from module_1_data_extraction import RedditDataExtractor
-from module_2_preprocessing import RedditDataPreprocessor
-from module_3_training import RedditModelTrainer
+from litigpt.data.extraction import RedditDataExtractor
+from litigpt.data.preprocessing import RedditDataPreprocessor
+from litigpt.training.trainer import RedditModelTrainer
 
 # Configuration
 TARGET_USER = "your_username"  # CHANGE THIS
@@ -336,7 +336,7 @@ shutil.make_archive('/kaggle/working/reddit_bot_model', 'zip', 'models/reddit_bo
 !pip install -r requirements.txt
 
 # Run pipeline
-!python run_pipeline.py --step all
+!python -m litigpt.pipeline --step all
 ```
 
 ---
@@ -448,7 +448,7 @@ users = ["user1", "user2", "user3"]
 users_data = extractor.extract_multiple_users(users, min_comments_per_user=100)
 
 # Build classifier
-from module_13_user_classifier import build_user_classifier_from_data
+from litigpt.inference.classifier import build_user_classifier_from_data
 classifier = build_user_classifier_from_data("data/processed")
 classifier.save_profiles("models/user_classifier.pkl")
 
@@ -587,22 +587,22 @@ with open('config.yaml', 'w') as f:
     f.write(config)
 
 # === CELL 4: Paste Modules ===
-# Paste module_1_data_extraction.py here
-%%writefile module_1_data_extraction.py
+# Paste litigpt/data/extraction.py here
+%%writefile litigpt/data/extraction.py
 [PASTE MODULE 1 CODE]
 
-%%writefile module_2_preprocessing.py
+%%writefile litigpt/data/preprocessing.py
 [PASTE MODULE 2 CODE]
 
-%%writefile module_3_training.py
+%%writefile litigpt/training/trainer.py
 [PASTE MODULE 3 CODE]
 
 # === CELL 5: Run Training ===
 !python -c "
 import yaml
-from module_1_data_extraction import RedditDataExtractor
-from module_2_preprocessing import RedditDataPreprocessor
-from module_3_training import RedditModelTrainer
+from litigpt.data.extraction import RedditDataExtractor
+from litigpt.data.preprocessing import RedditDataPreprocessor
+from litigpt.training.trainer import RedditModelTrainer
 import pandas as pd
 import jsonlines
 

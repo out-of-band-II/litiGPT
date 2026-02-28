@@ -35,7 +35,7 @@ def launch_gradio(model_path, base_model, config, multi_user, share, port):
     """Launch Gradio interface"""
     cmd = [
         sys.executable,
-        "module_9_gradio_interface.py",
+        "litigpt/interface/gradio_app.py",
         "--model", model_path,
         "--base-model", base_model,
         "--config", config,
@@ -62,7 +62,7 @@ def launch_ollama(model_path, base_model, config, multi_user, host, port):
     """Launch Ollama-style interface"""
     cmd = [
         sys.executable,
-        "module_10_ollama_interface.py",
+        "litigpt/interface/ollama.py",
         "--model", model_path,
         "--base-model", base_model,
         "--config", config,
@@ -161,7 +161,7 @@ Examples:
     if not Path(args.model).exists():
         print(f"❌ Error: Model not found at {args.model}")
         print("\nMake sure you've trained a model first:")
-        print("  python run_pipeline.py --step train")
+        print("  python -m litigpt.pipeline --step train")
         sys.exit(1)
     
     # Check dependencies

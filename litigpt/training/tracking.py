@@ -250,7 +250,7 @@ class ModelEvaluator:
 def integrate_mlflow_with_trainer(trainer, tracker: MLflowTracker, config: dict):
     """
     Integrate MLflow tracking with the training process
-    This would be added to module_3_training.py
+    This would be added to litigpt/training/trainer.py
     """
     
     # Start MLflow run

@@ -23,22 +23,22 @@ docker-compose up -d mlflow
 
 ```bash
 # Full pipeline (local) - Single user
-python run_pipeline.py --step all
+python -m litigpt.pipeline --step all
 
 # Full pipeline - Multi-user
 # 1. Edit config.yaml to enable multi_user and list target_usernames
 # 2. Run pipeline
-python run_pipeline.py --step all
+python -m litigpt.pipeline --step all
 
 # Step-by-step
-python run_pipeline.py --step extract
-python run_pipeline.py --step preprocess
-python run_pipeline.py --step train
-python run_pipeline.py --step eval
-python run_pipeline.py --step deploy
+python -m litigpt.pipeline --step extract
+python -m litigpt.pipeline --step preprocess
+python -m litigpt.pipeline --step train
+python -m litigpt.pipeline --step eval
+python -m litigpt.pipeline --step deploy
 
 # Build user classifier (multi-user only)
-python -c "from module_13_user_classifier import build_user_classifier_from_data; \
+python -c "from litigpt.inference.classifier import build_user_classifier_from_data; \
 classifier = build_user_classifier_from_data('data/processed'); \
 classifier.save_profiles('models/user_classifier.pkl')"
 
@@ -51,16 +51,16 @@ docker-compose --profile bot up -d bot
 
 ```bash
 # Extract multiple users
-python -c "from module_1_data_extraction import RedditDataExtractor; \
+python -c "from litigpt.data.extraction import RedditDataExtractor; \
 extractor = RedditDataExtractor('data/raw'); \
 users_data = extractor.extract_multiple_users(['alice', 'bob', 'charlie']); \
 extractor.save_multi_user_data(users_data, 'data/processed')"
 
 # Build and test classifier
-python module_13_user_classifier.py
+python -m litigpt.inference.classifier
 
 # Test user selection
-python -c "from module_13_user_classifier import UserClassifier; \
+python -c "from litigpt.inference.classifier import UserClassifier; \
 classifier = UserClassifier(); \
 classifier.load_profiles('models/user_classifier.pkl'); \
 print(classifier.classify_context('your context here', top_k=3))"
@@ -77,7 +77,7 @@ docker-compose up -d mlflow
 # Access: http://localhost:5000
 
 # Compare runs (Python)
-from module_8_mlflow_tracking import MLflowTracker
+from litigpt.training.tracking import MLflowTracker
 tracker = MLflowTracker()
 tracker.compare_runs(metric="val_loss", n_best=5)
 ```
@@ -126,7 +126,7 @@ docker push YOUR_DOCKERHUB/reddit-training:latest
 
 # 2. Deploy on https://runpod.io
 # 3. SSH and run:
-python module_3_training.py
+python -m litigpt.training.trainer
 ```
 
 ### Google Colab (Free GPU Training)
@@ -154,7 +154,7 @@ python module_3_training.py
 
 ### AWS ECS (Bot)
 ```python
-from module_12_cloud_deployment import AWSDeployer
+from litigpt.deployment.cloud import AWSDeployer
 deployer = AWSDeployer(region="us-east-1")
 repo_uri = deployer.create_ecr_repository()
 # Build, push, deploy...
@@ -209,7 +209,7 @@ MLFLOW_TRACKING_URI=http://localhost:5000
 
 ```python
 # Interactive mode - Single user
-from module_4_inference import RedditBotInference
+from litigpt.inference.generator import RedditBotInference
 
 bot = RedditBotInference(
     model_path="models/reddit_bot_lora",
@@ -230,7 +230,7 @@ response = bot.generate_as_user(
 print(response)
 
 # Auto-select user based on context
-from module_13_user_classifier import UserClassifier
+from litigpt.inference.classifier import UserClassifier
 classifier = UserClassifier()
 classifier.load_profiles("models/user_classifier.pkl")
 
@@ -242,7 +242,7 @@ response = bot.generate_as_user(context, username=user)
 ## 📈 Model Evaluation
 
 ```python
-from module_8_mlflow_tracking import ModelEvaluator
+from litigpt.training.tracking import ModelEvaluator
 
 evaluator = ModelEvaluator(bot_inference)
 
@@ -309,7 +309,7 @@ reddit-chatbot/
 ├── models/               # Trained models
 ├── logs/                 # Bot logs
 ├── mlruns/              # MLflow experiments
-├── module_*.py          # Pipeline modules
+├── litigpt/             # Package modules
 ├── Dockerfile.*         # Container definitions
 ├── docker-compose.yml   # Orchestration
 ├── config.yaml          # Configuration
@@ -321,14 +321,14 @@ reddit-chatbot/
 
 | File | Purpose |
 |------|---------|
-| `module_1_data_extraction.py` | Extract user comments (single/multi) |
-| `module_2_preprocessing.py` | Clean and format data |
-| `module_3_training.py` | Fine-tune model |
-| `module_4_inference.py` | Generate responses (with user selection) |
-| `module_5_deployment.py` | Deploy bot to Reddit |
-| `module_8_mlflow_tracking.py` | Track experiments |
-| `module_13_user_classifier.py` | Auto-select user personality |
-| `run_pipeline.py` | Run full pipeline |
+| `litigpt/data/extraction.py` | Extract user comments (single/multi) |
+| `litigpt/data/preprocessing.py` | Clean and format data |
+| `litigpt/training/trainer.py` | Fine-tune model |
+| `litigpt/inference/generator.py` | Generate responses (with user selection) |
+| `litigpt/deployment/reddit_bot.py` | Deploy bot to Reddit |
+| `litigpt/training/tracking.py` | Track experiments |
+| `litigpt/inference/classifier.py` | Auto-select user personality |
+| `litigpt/pipeline.py` | Run full pipeline |
 | `Dockerfile.training` | GPU training container |
 | `Dockerfile.bot` | Bot deployment container |
 

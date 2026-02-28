@@ -52,12 +52,8 @@ RUN pip install wandb>=0.15.0
 # Set working directory
 WORKDIR /workspace
 
-# Copy training modules
-COPY module_0_preliminary.py .
-COPY module_1_data_extraction.py .
-COPY module_2_preprocessing.py .
-COPY module_3_training.py .
-COPY module_8_mlflow_tracking.py .
+# Copy package and config
+COPY litigpt/ litigpt/
 COPY config.yaml .
 COPY requirements.txt .
 
@@ -74,7 +70,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import torch; assert torch.cuda.is_available()" || exit 1
 
 # Default command
-CMD ["python", "module_3_training.py"]
+CMD ["python", "-m", "litigpt.training.trainer"]
 
 # Build command:
 # docker build -f Dockerfile.training -t reddit-chatbot-training:latest .

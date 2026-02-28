@@ -88,7 +88,7 @@ class RedditDataPreprocessor:
             all_comments: All subreddit comments for context (Polars DataFrame)
             username: Username to tag in training data (for multi-user)
         """
-        from module_1_data_extraction import RedditDataExtractor
+        from litigpt.data.extraction import RedditDataExtractor
 
         extractor = RedditDataExtractor(raw_data_dir)
         thread_data = extractor.build_conversation_threads(all_comments)
@@ -305,7 +305,7 @@ if __name__ == "__main__":
     user_data = pl.read_parquet(f"data/processed/{user}_data.parquet")
 
     # Load all comments for context building
-    from module_1_data_extraction import RedditDataExtractor
+    from litigpt.data.extraction import RedditDataExtractor
     extractor = RedditDataExtractor(raw_data_dir)
     all_comments = extractor.load_data(comments_data_file)
 

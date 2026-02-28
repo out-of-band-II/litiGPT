@@ -18,13 +18,13 @@ Complete guide for deploying your Reddit chatbot locally and to the cloud.
 
 ```bash
 # 1. Train model locally
-python module_3_training.py
+python -m litigpt.training.trainer
 
 # 2. Test interactively
-python module_4_inference.py
+python -m litigpt.inference.generator
 
 # 3. Run bot
-python module_5_deployment.py
+python -m litigpt.deployment.reddit_bot
 ```
 
 ### With MLflow Tracking
@@ -37,7 +37,7 @@ mlflow ui --port 5000 &
 export MLFLOW_TRACKING_URI=http://localhost:5000
 
 # 3. Train with tracking
-python module_3_training.py
+python -m litigpt.training.trainer
 
 # 4. View experiments at http://localhost:5000
 ```
@@ -122,7 +122,7 @@ docker run --gpus all \
   -v $(pwd)/mlruns:/workspace/mlruns \
   -e MLFLOW_TRACKING_URI=http://host.docker.internal:5000 \
   reddit-training:latest \
-  python module_3_training.py
+  python -m litigpt.training.trainer
 ```
 
 **Bot (CPU only):**
@@ -141,7 +141,7 @@ docker run -d \
 docker run -it --rm \
   -v $(pwd)/models:/app/models \
   reddit-bot:latest \
-  python module_4_inference.py
+  python -m litigpt.inference.generator
 ```
 
 ---
@@ -172,7 +172,7 @@ docker push YOUR_DOCKERHUB/reddit-training:latest
 
 3. SSH into pod and run:
 ```bash
-python module_3_training.py
+python -m litigpt.training.trainer
 ```
 
 **Cost:** ~$0.50-2.00/hour depending on GPU
@@ -184,7 +184,7 @@ python module_3_training.py
 **Setup:**
 
 ```python
-from module_12_cloud_deployment import AWSDeployer
+from litigpt.deployment.cloud import AWSDeployer
 
 # Initialize
 deployer = AWSDeployer(region="us-east-1")
@@ -298,7 +298,7 @@ mlflow server \
 
 **View Experiments:**
 ```python
-from module_8_mlflow_tracking import MLflowTracker
+from litigpt.training.tracking import MLflowTracker
 
 tracker = MLflowTracker()
 

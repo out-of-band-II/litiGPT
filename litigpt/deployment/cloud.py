@@ -39,7 +39,7 @@ echo "6. Set environment variables from .env"
 echo "7. Start pod and SSH in"
 echo ""
 echo "Run training with:"
-echo "  python module_3_training.py"
+echo "  python -m litigpt.training.trainer"
 """
 
 # =============================================================================

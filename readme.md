@@ -103,17 +103,29 @@ reddit-chatbot/
 │   └── training/         # Formatted training data
 ├── models/               # Trained models
 ├── logs/                 # Bot logs
-├── module_1_data_extraction.py
-├── module_2_preprocessing.py
-├── module_3_training.py
-├── module_4_inference.py
-├── module_5_deployment.py
-├── module_6_config_setup.py
-├── module_8_mlflow_tracking.py
-├── run_pipeline.py
-├── Dockerfile.training        # GPU training container
+├── litigpt/                  # Main package
+│   ├── data/
+│   │   ├── extraction.py     # Reddit data extraction
+│   │   ├── preprocessing.py  # Data cleaning & formatting
+│   │   └── preliminary.py    # Raw data conversion utilities
+│   ├── training/
+│   │   ├── trainer.py        # QLoRA fine-tuning
+│   │   └── tracking.py       # MLflow experiment tracking
+│   ├── inference/
+│   │   ├── generator.py      # Response generation
+│   │   └── classifier.py     # Multi-user classification
+│   ├── deployment/
+│   │   ├── reddit_bot.py     # Reddit bot deployment
+│   │   └── cloud.py          # Cloud deployment (AWS, GCP, K8s)
+│   ├── interface/
+│   │   ├── gradio_app.py     # Gradio chat UI
+│   │   └── ollama.py         # Ollama-compatible API
+│   ├── config.py             # Configuration setup
+│   └── pipeline.py           # Pipeline orchestrator
+├── launch_chat.py            # Quick-launch script for chat interfaces
+├── Dockerfile.training       # GPU training container
 ├── Dockerfile.bot            # Lightweight bot container
-├── docker-compose.yml        # Orchestration
+├── docker_compose.yaml       # Orchestration
 ├── config.yaml
 ├── .env
 └── requirements.txt
@@ -147,52 +159,52 @@ Get credentials at: https://www.reddit.com/prefs/apps
 # 2. Edit config.yaml with target username
 
 # 3. Run complete pipeline
-python run_pipeline.py --step all
+python -m litigpt.pipeline --step all
 ```
 
 ### Option 2: Step-by-Step
 
 ```bash
 # Step 1: Extract user data
-python run_pipeline.py --step extract
+python -m litigpt.pipeline --step extract
 
 # Step 2: Preprocess data
-python run_pipeline.py --step preprocess
+python -m litigpt.pipeline --step preprocess
 
 # Step 3: Train model (2-8 hours depending on data size)
-python run_pipeline.py --step train
+python -m litigpt.pipeline --step train
 
 # Step 4: Evaluate model
-python run_pipeline.py --step eval
+python -m litigpt.pipeline --step eval
 
 # Step 5: Deploy bot
-python run_pipeline.py --step deploy
+python -m litigpt.pipeline --step deploy
 ```
 
 ---
 
 ## Module Breakdown
 
-### Module 1: Data Extraction
-**File**: `module_1_data_extraction.py`
+### Data Extraction
+**File**: `litigpt/data/extraction.py`
 
 Extracts target user's comments and posts from subreddit JSONL files.
 
 ```python
-from module_1_data_extraction import RedditDataExtractor
+from litigpt.data.extraction import RedditDataExtractor
 
 extractor = RedditDataExtractor("data/raw")
 user_data = extractor.extract_user_data("target_username")
 extractor.save_processed_data(user_data, "data/processed/user_data.jsonl")
 ```
 
-### Module 2: Preprocessing
-**File**: `module_2_preprocessing.py`
+### Preprocessing
+**File**: `litigpt/data/preprocessing.py`
 
 Cleans data, builds conversation context, formats for training.
 
 ```python
-from module_2_preprocessing import RedditDataPreprocessor
+from litigpt.data.preprocessing import RedditDataPreprocessor
 
 preprocessor = RedditDataPreprocessor()
 user_data = preprocessor.filter_quality(user_data)
@@ -200,13 +212,13 @@ pairs = preprocessor.create_training_pairs(user_data, all_comments)
 formatted = preprocessor.format_for_training(pairs, format_type="chatml")
 ```
 
-### Module 3: Training
-**File**: `module_3_training.py`
+### Training
+**File**: `litigpt/training/trainer.py`
 
 Fine-tunes language model using QLoRA for efficiency.
 
 ```python
-from module_3_training import RedditModelTrainer
+from litigpt.training.trainer import RedditModelTrainer
 
 trainer = RedditModelTrainer(
     model_name="meta-llama/Llama-3.1-8B-Instruct",
@@ -221,13 +233,13 @@ trainer.train(data_dir="data/training", num_epochs=3)
 - **batch_size=4**: Adjust based on VRAM (lower if OOM errors)
 - **num_epochs=3**: More epochs for smaller datasets
 
-### Module 4: Inference
-**File**: `module_4_inference.py`
+### Inference
+**File**: `litigpt/inference/generator.py`
 
 Generate responses using the fine-tuned model.
 
 ```python
-from module_4_inference import RedditBotInference
+from litigpt.inference.generator import RedditBotInference
 
 bot = RedditBotInference(
     model_path="models/reddit_bot_lora",
@@ -245,13 +257,13 @@ response = bot.generate_response(
 - **top_p** (0.1-1.0): Nucleus sampling threshold
 - **max_new_tokens**: Maximum response length
 
-### Module 5: Deployment
-**File**: `module_5_deployment.py`
+### Deployment
+**File**: `litigpt/deployment/reddit_bot.py`
 
 Deploys bot to monitor and respond on Reddit.
 
 ```python
-from module_5_deployment import RedditBot
+from litigpt.deployment.reddit_bot import RedditBot
 
 bot = RedditBot(
     model_path="models/reddit_bot_lora",
@@ -324,7 +336,7 @@ training:
 ### Interactive Testing
 
 ```python
-from module_4_inference import RedditBotInference
+from litigpt.inference.generator import RedditBotInference
 
 bot = RedditBotInference("models/reddit_bot_lora", "meta-llama/Llama-3.1-8B-Instruct")
 bot.interactive_mode()
@@ -333,7 +345,7 @@ bot.interactive_mode()
 ### Custom Deployment
 
 ```python
-from module_5_deployment import RedditBot
+from litigpt.deployment.reddit_bot import RedditBot
 
 bot = RedditBot(
     model_path="models/reddit_bot_lora",
@@ -424,7 +436,7 @@ docker-compose up -d mlflow
 
 **Compare Experiments:**
 ```python
-from module_8_mlflow_tracking import MLflowTracker
+from litigpt.training.tracking import MLflowTracker
 
 tracker = MLflowTracker()
 best_runs = tracker.compare_runs(metric="val_loss", n_best=5)
@@ -482,7 +494,7 @@ docker-compose down
 
 **AWS ECS:**
 ```python
-from module_12_cloud_deployment import AWSDeployer
+from litigpt.deployment.cloud import AWSDeployer
 
 deployer = AWSDeployer(region="us-east-1")
 repo_uri = deployer.create_ecr_repository()
@@ -526,7 +538,7 @@ trainer.train()
 ### Faster Inference with vLLM
 
 ```python
-from module_4_inference import RedditBotInferenceVLLM
+from litigpt.inference.generator import RedditBotInferenceVLLM
 
 bot = RedditBotInferenceVLLM("models/reddit_bot_lora_merged")
 response = bot.generate_response(context, temperature=0.8)
@@ -535,7 +547,7 @@ response = bot.generate_response(context, temperature=0.8)
 ### Merging LoRA Adapters
 
 ```python
-from module_3_training import RedditModelTrainer
+from litigpt.training.trainer import RedditModelTrainer
 
 trainer = RedditModelTrainer("meta-llama/Llama-3.1-8B-Instruct", "models/output")
 merged_path = trainer.merge_and_save_full_model("models/reddit_bot_lora")
@@ -544,7 +556,7 @@ merged_path = trainer.merge_and_save_full_model("models/reddit_bot_lora")
 ### Custom Conversation Context
 
 ```python
-from module_1_data_extraction import RedditDataExtractor
+from litigpt.data.extraction import RedditDataExtractor
 
 extractor = RedditDataExtractor("data/raw")
 thread_data = extractor.build_conversation_threads(all_comments)

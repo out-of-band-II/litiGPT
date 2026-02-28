@@ -45,7 +45,7 @@ services:
     networks:
       - reddit-bot-network
     # Don't auto-start, run manually with:
-    # docker-compose run --rm training python module_3_training.py
+    # docker-compose run --rm training python -m litigpt.training.trainer
     profiles:
       - training
 
