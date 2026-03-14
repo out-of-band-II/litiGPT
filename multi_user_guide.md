@@ -48,11 +48,11 @@ Bot (as gamer_user): "Yeah! I'm stuck in Diamond trying to hit Ascendant"
 The model learns to respond as different users by including the username in the system prompt:
 
 ```
-System: You are alice, a Reddit user. Respond in alice's writing style.
+System: Sei alice, un utente di Reddit. Rispondi nello stile e nel tono di scrittura di alice.
 User: What do you think about AI?
 Assistant: [alice's response style]
 
-System: You are bob, a Reddit user. Respond in bob's writing style.
+System: Sei bob, un utente di Reddit. Rispondi nello stile e nel tono di scrittura di bob.
 User: What do you think about AI?
 Assistant: [bob's response style]
 ```
@@ -162,11 +162,10 @@ with jsonlines.open("data/raw/comments.jsonl") as reader:
 # Create multi-user training pairs
 pairs = preprocessor.create_multi_user_training_pairs(users_data, all_comments)
 
-# Format with multi-user flag
+# Format for training (username is always included per-example)
 formatted = preprocessor.format_for_training(
-    pairs, 
+    pairs,
     format_type="chatml",
-    multi_user=True  # Important!
 )
 
 # Split and save
@@ -182,9 +181,9 @@ Training works the same way, but now the model learns multiple personalities:
 python -m litigpt.training.trainer
 ```
 
-The system prompts will vary:
-- `"You are alice_tech, a Reddit user. Respond in alice_tech's writing style."`
-- `"You are bob_gaming, a Reddit user. Respond in bob_gaming's writing style."`
+The system prompts will vary (in Italian):
+- `"Sei alice_tech, un utente di Reddit. Rispondi nello stile e nel tono di scrittura di alice_tech."`
+- `"Sei bob_gaming, un utente di Reddit. Rispondi nello stile e nel tono di scrittura di bob_gaming."`
 - etc.
 
 ### 3. Build User Classifier

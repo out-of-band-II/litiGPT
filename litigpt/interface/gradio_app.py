@@ -7,6 +7,7 @@ import gradio as gr
 from pathlib import Path
 import yaml
 from typing import List, Tuple, Optional
+from litigpt.prompts import build_system_prompt
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from peft import PeftModel
@@ -111,10 +112,10 @@ class GradioChatInterface:
         
         # Build prompt
         if self.multi_user and username:
-            system_prompt = f"You are {username}, a Reddit user. Respond in the style and tone of {username}."
+            system_prompt = build_system_prompt(username)
         else:
-            target_user = self.config['data'].get('target_username', 'a Reddit user')
-            system_prompt = f"You are {target_user}, a Reddit user. Respond in your natural style."
+            target_user = self.config['data'].get('target_username', 'anonimo')
+            system_prompt = build_system_prompt(target_user)
         
         prompt = f"""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
 

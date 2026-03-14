@@ -66,9 +66,9 @@ All source code lives in the `litigpt/` package, organized by function:
 - **Training Time**: 2-3 hours for 2000 comments on RTX 4090
 
 ### Multi-User System
-**Training**: Each example includes username in system prompt
+**Training**: Each example includes username in system prompt (in Italian, since the bot targets an Italian subreddit)
 ```python
-System: "You are alice, a Reddit user. Respond in alice's style."
+System: "Sei alice, un utente di Reddit. Rispondi nello stile e nel tono di scrittura di alice."
 User: [context]
 Assistant: [alice's response]
 ```
