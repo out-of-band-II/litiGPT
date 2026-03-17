@@ -424,7 +424,8 @@ generated_responses/
 *.sqlite3
 *.db
 
-# Config overrides (keep main config.yaml)
+# Config (user-specific; config.default.yaml is the tracked template)
+config.yaml
 config.local.yaml
 config.override.yaml
 config.dev.yaml
@@ -477,3 +478,4 @@ config.prod.yaml
 # git add -f filename
 
 .claude
+.mcp*

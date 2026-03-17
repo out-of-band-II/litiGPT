@@ -11,7 +11,7 @@ from transformers import (
     TrainingArguments,
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from trl import SFTTrainer
+from trl.trainer.sft_trainer import SFTTrainer
 from datasets import load_dataset
 import os
 
