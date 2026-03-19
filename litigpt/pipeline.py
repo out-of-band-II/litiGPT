@@ -97,6 +97,10 @@ class PipelineRunner:
     def run_training(self):
         """Step 3: Fine-tune the model"""
         from litigpt.training.trainer import RedditModelTrainer
+        from litigpt.training.tracking import MLflowTracker
+        import mlflow
+        import jsonlines
+        import os
 
         print("\n[3/5] TRAINING MODEL")
         print("-" * 60)
@@ -104,28 +108,74 @@ class PipelineRunner:
         model_config = self.config['model']
         training_config = self.config['training']
         data_config = self.config['data']
-        
-        trainer = RedditModelTrainer(
-            model_name=model_config['base_model'],
-            output_dir=model_config['output_dir']
+
+        # Initialize MLflow
+        tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "file:./mlruns")
+        tracker = MLflowTracker(
+            experiment_name="reddit-chatbot-training",
+            tracking_uri=tracking_uri
         )
-        
-        print(f"Base model: {model_config['base_model']}")
-        print(f"Output: {model_config['output_dir']}")
-        print(f"Epochs: {training_config['num_epochs']}")
-        print(f"Batch size: {training_config['batch_size']}")
-        print(f"Learning rate: {training_config['learning_rate']}")
-        
-        # Train
-        trainer.train(
-            data_dir=data_config['training_dir'],
-            num_epochs=training_config['num_epochs'],
-            batch_size=training_config['batch_size'],
-            learning_rate=training_config['learning_rate'],
-            max_seq_length=training_config['max_seq_length']
+
+        users = data_config.get('target_usernames', [])
+        model_short = model_config['base_model'].split('/')[-1]
+        run_name = f"train_{'_'.join(users)}_{model_short}"
+        tracker.start_run(
+            run_name=run_name,
+            tags={
+                'model': model_config['base_model'],
+                'users': ','.join(users),
+            }
         )
-        
-        print(f"[OK] Model trained and saved to {model_config['output_dir']}")
+
+        try:
+            # Log full config as params
+            tracker.log_config(self.config)
+
+            # Log config.yaml as artifact for exact reproducibility
+            if Path("config.yaml").exists():
+                mlflow.log_artifact("config.yaml")
+
+            # Log dataset sizes
+            train_path = Path(data_config['training_dir']) / "train.jsonl"
+            val_path = Path(data_config['training_dir']) / "val.jsonl"
+            if train_path.exists() and val_path.exists():
+                with jsonlines.open(train_path) as r:
+                    train_size = sum(1 for _ in r)
+                with jsonlines.open(val_path) as r:
+                    val_size = sum(1 for _ in r)
+                mlflow.log_metric("train_size", train_size)
+                mlflow.log_metric("val_size", val_size)
+
+            print(f"Base model: {model_config['base_model']}")
+            print(f"Output: {model_config['output_dir']}")
+            print(f"Epochs: {training_config['num_epochs']}")
+            print(f"Batch size: {training_config['batch_size']}")
+            print(f"Learning rate: {training_config['learning_rate']}")
+
+            trainer = RedditModelTrainer(
+                model_name=model_config['base_model'],
+                output_dir=model_config['output_dir']
+            )
+
+            trainer.train(
+                data_dir=data_config['training_dir'],
+                num_epochs=training_config['num_epochs'],
+                batch_size=training_config['batch_size'],
+                learning_rate=training_config['learning_rate'],
+                max_seq_length=training_config['max_seq_length'],
+                report_to="mlflow",
+            )
+
+            # Log LoRA adapter config (small file, captures adapter architecture)
+            adapter_config = Path(model_config['output_dir']) / "adapter_config.json"
+            if adapter_config.exists():
+                mlflow.log_artifact(str(adapter_config), artifact_path="model")
+
+            mlflow.set_tag("model_local_path", model_config['output_dir'])
+            print(f"[OK] Model trained and saved to {model_config['output_dir']}")
+
+        finally:
+            tracker.end_run()
     
     def run_evaluation(self):
         """Step 4: Test the model interactively"""

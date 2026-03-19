@@ -21,6 +21,10 @@ class RedditModelTrainer:
         self.model_name = model_name
         self.output_dir = output_dir
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        # BFloat16 requires Ampere (sm_80) or newer; Pascal/Turing must use fp16
+        self.use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+        self.compute_dtype = torch.bfloat16 if self.use_bf16 else torch.float16
+        print(f"Compute dtype: {'bfloat16' if self.use_bf16 else 'float16'}")
         
     def load_model_and_tokenizer(self):
         """Load model with 4-bit quantization for QLoRA"""
@@ -29,10 +33,10 @@ class RedditModelTrainer:
         bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_compute_dtype=self.compute_dtype,
             bnb_4bit_use_double_quant=True,
         )
-        
+
         # Load model
         print(f"Loading model: {self.model_name}")
         model = AutoModelForCausalLM.from_pretrained(
@@ -40,6 +44,7 @@ class RedditModelTrainer:
             quantization_config=bnb_config,
             device_map="auto",
             trust_remote_code=True,
+            torch_dtype=self.compute_dtype,  # non-quantized tensors (embeds, norms, LoRA) match compute dtype
         )
         
         # Prepare for training
@@ -109,12 +114,13 @@ class RedditModelTrainer:
         
         return {"text": text}
     
-    def train(self, 
+    def train(self,
               data_dir: str = "data/training",
               num_epochs: int = 3,
               batch_size: int = 4,
               learning_rate: float = 2e-4,
-              max_seq_length: int = 512):
+              max_seq_length: int = 512,
+              report_to: str = "none"):
         """Train the model"""
         
         # Load model and tokenizer
@@ -150,8 +156,9 @@ class RedditModelTrainer:
             save_strategy="steps",
             save_steps=100,
             save_total_limit=3,
-            fp16=True,
-            report_to="tensorboard",
+            fp16=not self.use_bf16,
+            bf16=self.use_bf16,
+            report_to=report_to,
             load_best_model_at_end=True,
             max_length=max_seq_length,
             dataset_text_field="text",
