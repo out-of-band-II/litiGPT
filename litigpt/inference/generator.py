@@ -8,6 +8,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from peft import PeftModel
 from typing import List, Dict, Optional
 
+from litigpt.prompts import build_system_prompt
+
 class RedditBotInference:
     def __init__(self, 
                  model_path: str,
@@ -83,12 +85,11 @@ class RedditBotInference:
             system_prompt: Optional system prompt override
             username: Username to impersonate (for multi-user models)
         """
-        
         if system_prompt is None:
             if username:
-                system_prompt = f"You are {username}, a Reddit user. Respond in {username}'s writing style and tone."
+                system_prompt = build_system_prompt(username)
             else:
-                system_prompt = "You are a helpful Reddit user responding to comments in a conversational manner."
+                system_prompt = build_system_prompt("anonimo")
         
         messages = [
             {"role": "system", "content": system_prompt},
@@ -242,7 +243,7 @@ class RedditBotInferenceVLLM:
         from vllm import SamplingParams
         
         # Format prompt (assuming ChatML format)
-        prompt = f"<|im_start|>system\nYou are a helpful Reddit user.<|im_end|>\n<|im_start|>user\n{context}<|im_end|>\n<|im_start|>assistant\n"
+        prompt = f"<|im_start|>system\n{build_system_prompt('anonimo')}<|im_end|>\n<|im_start|>user\n{context}<|im_end|>\n<|im_start|>assistant\n"
         
         sampling_params = SamplingParams(
             temperature=temperature,

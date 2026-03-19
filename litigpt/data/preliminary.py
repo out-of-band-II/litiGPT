@@ -26,28 +26,42 @@ logger = logging.getLogger(__name__)
 
 # Only keep columns actually used by the pipeline (extraction, preprocessing,
 # classifier, network graph, bot). Everything else is dropped to save memory.
-COLS_TO_KEEP = {
-    'id',           # unique comment/submission identifier
-    'parent_id',    # thread building (t1_<id> format)
-    'link_id',      # maps comment to its submission (t3_<id> format)
+#
+# Split by record type so each parquet file contains exactly the columns it
+# needs, making downstream expectations explicit.
+
+_COMMON_COLS = {
+    'id',           # unique identifier
     'author',       # filter by / label by user
-    'body',         # comment text
-    'selftext',     # submission (post) text
     'score',        # quality filtering
-    'created_utc',  # chronological ordering
+    'created_utc',  # chronological ordering (cast to datetime after read)
     'subreddit',    # subreddit name (useful for multi-sub analysis)
     'name',         # fallback identifier (used if 'id' missing)
 }
 
+COMMENT_COLS = _COMMON_COLS | {
+    'parent_id',    # thread building (t1_<id> format)
+    'link_id',      # maps comment to its submission (t3_<id> format)
+    'body',         # comment text
+}
+
+SUBMISSION_COLS = _COMMON_COLS | {
+    'selftext',     # submission (post) body text
+    'title',        # submission title
+}
+
+# Union kept for the generic / auto-detect path
+COLS_TO_KEEP = COMMENT_COLS | SUBMISSION_COLS
+
 BATCH_SIZE = 50_000
 
 
-def _strip_row(row: dict) -> dict:
-    """Keep only COLS_TO_KEEP keys from a parsed JSON row."""
-    return {k: v for k, v in row.items() if k in COLS_TO_KEEP}
+def _strip_row(row: dict, cols: set[str] = COLS_TO_KEEP) -> dict:
+    """Keep only *cols* keys from a parsed JSON row."""
+    return {k: v for k, v in row.items() if k in cols}
 
 
-def _iter_jsonl(filepath: str) -> Generator[dict, None, None]:
+def _iter_jsonl(filepath: str, cols: set[str] = COLS_TO_KEEP) -> Generator[dict, None, None]:
     """Yield stripped JSON objects from a plain JSONL file, skipping bad lines."""
     with open(filepath, 'r', encoding='utf-8') as f:
         for i, line in enumerate(f, 1):
@@ -55,12 +69,12 @@ def _iter_jsonl(filepath: str) -> Generator[dict, None, None]:
             if not line:
                 continue
             try:
-                yield _strip_row(json.loads(line))
+                yield _strip_row(json.loads(line), cols)
             except json.JSONDecodeError as e:
                 logger.warning(f"Skipping malformed line {i}: {e}")
 
 
-def _iter_zstd(filepath: str, condition=None) -> Generator[dict, None, None]:
+def _iter_zstd(filepath: str, condition=None, cols: set[str] = COLS_TO_KEEP) -> Generator[dict, None, None]:
     """Yield stripped JSON objects from a zstd-compressed JSONL file."""
     count = 0
     with open(filepath, 'rb') as compressed_file:
@@ -80,7 +94,7 @@ def _iter_zstd(filepath: str, condition=None) -> Generator[dict, None, None]:
                     count += 1
                     if count % 10_000 == 0:
                         logger.info(f"{count} rows extracted.")
-                    yield _strip_row(obj)
+                    yield _strip_row(obj, cols)
 
 
 def process_reddit_jsonl_to_parquet(
@@ -88,30 +102,39 @@ def process_reddit_jsonl_to_parquet(
     output_file: str,
     condition=None,
     batch_size: int = BATCH_SIZE,
+    cols: set[str] | None = None,
 ) -> pl.DataFrame:
     """
     Convert Reddit JSONL/zst to Parquet using Polars.
 
     Reads line-by-line via Python's json module to handle Reddit's
     inconsistent types (e.g. `edited` being bool or float).
-    Each row is stripped to COLS_TO_KEEP at read time, and batches
+    Each row is stripped to *cols* at read time, and batches
     are written incrementally to Parquet via PyArrow so we never
     hold the full dataset in memory.
+
+    Pass ``cols=COMMENT_COLS`` or ``cols=SUBMISSION_COLS`` for
+    type-specific column sets; defaults to the full COLS_TO_KEEP union.
+
+    ``created_utc`` is cast from a Unix-epoch string to a proper
+    ``Datetime`` column in the output Parquet.
     """
+    if cols is None:
+        cols = COLS_TO_KEEP
+
     input_path = Path(input_file)
 
     if input_path.suffix == '.zst':
-        row_iter = _iter_zstd(input_file, condition=condition)
+        row_iter = _iter_zstd(input_file, condition=condition, cols=cols)
     elif input_path.suffix == '.jsonl':
-        row_iter = _iter_jsonl(input_file)
+        row_iter = _iter_jsonl(input_file, cols=cols)
     else:
         raise ValueError(f"Extension {input_path.suffix} not supported. Use .jsonl or .zst")
 
     Path(output_file).parent.mkdir(parents=True, exist_ok=True)
 
-    # Fixed schema: all COLS_TO_KEEP as Utf8, so every batch matches.
-    # Polars will cast numeric-looking strings when downstream code reads the parquet.
-    sorted_cols = sorted(COLS_TO_KEEP)
+    # Fixed schema: all kept columns as Utf8, so every batch matches.
+    sorted_cols = sorted(cols)
     fixed_schema = pl.Schema({col: pl.Utf8 for col in sorted_cols})
 
     writer: pq.ParquetWriter | None = None
@@ -127,6 +150,16 @@ def process_reddit_jsonl_to_parquet(
                 elif row[col] is not None:
                     row[col] = str(row[col])
         df = pl.DataFrame(batch, schema=fixed_schema)
+
+        # Cast created_utc from string epoch to Datetime
+        if 'created_utc' in df.columns:
+            df = df.with_columns(
+                pl.col('created_utc')
+                .cast(pl.Float64, strict=False)
+                .cast(pl.Datetime('ms'))
+                .alias('created_utc')
+            )
+
         table = df.to_arrow()
         if writer is None:
             writer = pq.ParquetWriter(output_file, table.schema, compression='snappy')
@@ -155,8 +188,18 @@ def process_reddit_jsonl_to_parquet(
     file_size_mb = Path(output_file).stat().st_size / (1024 * 1024)
     logger.info(f"Saved {total_rows} records to {output_file} ({file_size_mb:.2f} MB)")
 
-    # Return a lightweight reference — read back from parquet (lazy scan, no full load)
+    # Return a lightweight reference - read back from parquet (lazy scan, no full load)
     return pl.scan_parquet(output_file).head(5).collect()
+
+
+def _infer_cols(filename: str) -> set[str]:
+    """Pick COMMENT_COLS or SUBMISSION_COLS based on the filename."""
+    name = filename.lower()
+    if 'comment' in name:
+        return COMMENT_COLS
+    if 'submission' in name or 'post' in name:
+        return SUBMISSION_COLS
+    return COLS_TO_KEEP  # fallback: keep everything
 
 
 def convert_all_reddit_data(raw_dir: str = "data/raw"):
@@ -170,9 +213,12 @@ def convert_all_reddit_data(raw_dir: str = "data/raw"):
 
     for source_file in files:
         parquet_file = source_file.with_suffix('.parquet')
-        logger.info(f"Processing: {source_file.name}")
+        cols = _infer_cols(source_file.name)
+        logger.info(f"Processing: {source_file.name} (cols={sorted(cols)})")
         try:
-            preview = process_reddit_jsonl_to_parquet(str(source_file), str(parquet_file))
+            preview = process_reddit_jsonl_to_parquet(
+                str(source_file), str(parquet_file), cols=cols,
+            )
             logger.info(f"  Columns: {preview.columns}")
         except Exception as e:
             logger.error(f"Error converting {source_file.name}: {e}")
@@ -181,11 +227,12 @@ def convert_all_reddit_data(raw_dir: str = "data/raw"):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
-    # Single file example
+    # Single file example (explicit column set)
     df = process_reddit_jsonl_to_parquet(
         'data/raw/litigi_comments.jsonl',
-        'data/raw/litigi_comments.parquet'
+        'data/raw/litigi_comments.parquet',
+        cols=COMMENT_COLS,
     )
 
-    # Or convert everything:
+    # Or convert everything (auto-detects cols from filename):
     # convert_all_reddit_data('data/raw')

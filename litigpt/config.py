@@ -69,11 +69,6 @@ data:
   processed_dir: "data/processed"
   training_dir: "data/training"
   
-  # Single-user mode
-  target_username: "specific_reddit_user"
-  
-  # Multi-user mode (overrides target_username if enabled)
-  multi_user: true
   target_usernames:
     - "user_alice"
     - "user_bob"
@@ -119,8 +114,6 @@ bot:
   cooldown_seconds: 120
   max_context_depth: 3
   
-  # Multi-user bot settings
-  multi_user: true
   available_users:
     - "user_alice"
     - "user_bob"
@@ -215,23 +208,23 @@ def quick_setup():
     # Check for .env
     print("\n2. Checking environment variables...")
     if not Path(".env").exists():
-        print("⚠️  No .env file found!")
+        print("[WARNING]  No .env file found!")
         print("Please create a .env file with your Reddit API credentials.")
         print("See the template in this file.")
     else:
-        print("✓ .env file found")
+        print("[OK] .env file found")
     
     # Check CUDA
     print("\n3. Checking CUDA availability...")
     try:
         import torch
         if torch.cuda.is_available():
-            print(f"✓ CUDA available: {torch.cuda.get_device_name(0)}")
+            print(f"[OK] CUDA available: {torch.cuda.get_device_name(0)}")
             print(f"  Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
         else:
-            print("⚠️  CUDA not available. Training will be slow on CPU.")
+            print("[WARNING]  CUDA not available. Training will be slow on CPU.")
     except ImportError:
-        print("⚠️  PyTorch not installed yet.")
+        print("[WARNING]  PyTorch not installed yet.")
     
     print("\n" + "=" * 50)
     print("Setup complete! Next steps:")

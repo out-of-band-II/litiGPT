@@ -168,10 +168,12 @@ In the UI:
 
 ### Custom System Prompt
 
-Edit the code in `litigpt/interface/gradio_app.py` or `litigpt/interface/ollama.py`:
+System prompts are centralized in `litigpt/prompts.py`. To customize, edit `build_system_prompt()`:
 
 ```python
-system_prompt = f"You are {username}. Your custom instructions here."
+# litigpt/prompts.py
+def build_system_prompt(username: str) -> str:
+    return f"Sei {username}, un utente di Reddit. Rispondi nello stile e nel tono di scrittura di {username}."
 ```
 
 ### Add Authentication (Ollama)

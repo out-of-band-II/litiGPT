@@ -249,9 +249,9 @@ class RedditBot:
             
             # Add disclaimer
             if self.multi_user and username:
-                disclaimer = f"\n\n---\n^(I'm a bot mimicking {username}'s style. Beep boop! 🤖)"
+                disclaimer = f"\n\n---\n^(I'm a bot mimicking {username}'s style. Beep boop! [bot])"
             else:
-                disclaimer = "\n\n---\n^(I'm a bot mimicking a specific user's style. Beep boop! 🤖)"
+                disclaimer = "\n\n---\n^(I'm a bot mimicking a specific user's style. Beep boop! [bot])"
             
             full_response = response + disclaimer
             

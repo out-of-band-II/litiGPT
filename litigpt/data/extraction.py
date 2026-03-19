@@ -184,17 +184,15 @@ def data_extraction_parser():
     parser = ArgumentParser(description="Data extraction module",
                             epilog="""
     Examples:
-    python %(prog)s -c litigi_comments.parquet -s submissions.jsonl --multi-user
+    python %(prog)s -c litigi_comments.parquet -s submissions.jsonl --users alice bob
     """)
 
     parser.add_argument("--dir", "-d", required=False, default="data/raw", help="Data directory")
     parser.add_argument("--comments", "-c", required=False, default="comments.parquet",
                        help="Comment data")
     parser.add_argument("--submissions", "-s", required=False, default="submissions.jsonl", help="Submission data")
-    parser.add_argument("--multi-user", action="store_true",
-                       help="Enable multi-user mode")
-    parser.add_argument("--users", nargs="+", type=str,
-                       help="users to extract")
+    parser.add_argument("--users", nargs="+", type=str, required=True,
+                       help="One or more usernames to extract")
 
     return parser
 
@@ -204,25 +202,11 @@ if __name__ == "__main__":
 
     parser = data_extraction_parser()
     args = parser.parse_args()
-    submission_data_file = args.submissions
-    comments_data_file = args.comments
-    users = args.users
+    extractor = RedditDataExtractor(args.dir)
 
-    multi_user: bool = args.multi_user
-    extractor = RedditDataExtractor("data/raw")
-    if not multi_user:
-        target_username = users[0]
-        if len(users) > 1:
-            import warnings
-            warnings.warn(f"No multi user option selected, processing only {target_username}")
-
-        user_data = extractor.extract_user_data(target_username, comments_data_file, submission_data_file)
-        extractor.save_processed_data(user_data, "data/processed/user_data.jsonl")
-    else:
-        users_data = extractor.extract_multiple_users(
-            usernames=users,
-            min_comments_per_user=100,
-            comments_file=comments_data_file,
-            posts_file=submission_data_file
-        )
-        extractor.save_multi_user_data(users_data, "data/processed")
+    users_data = extractor.extract_multiple_users(
+        usernames=args.users,
+        comments_file=args.comments,
+        posts_file=args.submissions
+    )
+    extractor.save_multi_user_data(users_data, "data/processed")

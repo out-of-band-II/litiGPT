@@ -8,6 +8,7 @@ from pathlib import Path
 import yaml
 import json
 from typing import List, Dict, Optional
+from litigpt.prompts import build_system_prompt
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from peft import PeftModel
@@ -106,10 +107,10 @@ class OllamaChatInterface:
         
         # Build prompt
         if self.multi_user and username:
-            system_prompt = f"You are {username}, a Reddit user. Respond in the style and tone of {username}."
+            system_prompt = build_system_prompt(username)
         else:
-            target_user = self.config['data'].get('target_username', 'a Reddit user')
-            system_prompt = f"You are {target_user}, a Reddit user. Respond in your natural style."
+            target_user = self.config['data'].get('target_username', 'anonimo')
+            system_prompt = build_system_prompt(target_user)
         
         prompt = f"""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
 
@@ -518,7 +519,7 @@ HTML_TEMPLATE = """
     <div class="container">
         <div class="header">
             <h1>
-                <span>🤖</span>
+                <span>[Bot]</span>
                 <span>Reddit Bot Chat</span>
             </h1>
             <div class="status" id="status">Ready</div>
@@ -549,7 +550,7 @@ HTML_TEMPLATE = """
 
         <div class="chat-area" id="chatArea">
             <div class="message assistant">
-                <div class="avatar">🤖</div>
+                <div class="avatar">[Bot]</div>
                 <div class="content">
                     <div class="role">Assistant</div>
                     <div class="text">Hi! I'm your Reddit bot. Ask me anything!</div>
@@ -611,7 +612,7 @@ HTML_TEMPLATE = """
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${role}`;
             
-            const avatar = role === 'user' ? '👤' : '🤖';
+            const avatar = role === 'user' ? '[You]' : '[Bot]';
             const roleText = role === 'user' ? 'You' : 'Assistant';
             
             messageDiv.innerHTML = `

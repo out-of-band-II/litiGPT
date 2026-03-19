@@ -1,3 +1,56 @@
+- [Claude AI Project Context](#claude-ai-project-context)
+  - [Project Overview](#project-overview)
+  - [Project Architecture](#project-architecture)
+    - [Core Pipeline](#core-pipeline)
+    - [Infrastructure](#infrastructure)
+  - [Key Technical Details](#key-technical-details)
+    - [Model Training](#model-training)
+    - [Multi-User System](#multi-user-system)
+    - [Data Format](#data-format)
+  - [File Structure](#file-structure)
+  - [Configuration](#configuration)
+    - [Single-User Mode](#single-user-mode)
+    - [Multi-User Mode](#multi-user-mode)
+  - [Common Tasks](#common-tasks)
+    - [For Claude: Helping with Code Issues](#for-claude-helping-with-code-issues)
+    - [For Claude: Adding Features](#for-claude-adding-features)
+  - [Code Style \& Patterns](#code-style--patterns)
+    - [Naming Conventions](#naming-conventions)
+    - [Error Handling](#error-handling)
+    - [Logging](#logging)
+    - [Progress Indication](#progress-indication)
+  - [Testing Strategy](#testing-strategy)
+    - [Manual Testing Flow](#manual-testing-flow)
+    - [Multi-User Testing](#multi-user-testing)
+  - [Performance Benchmarks](#performance-benchmarks)
+    - [Training (RTX 4090)](#training-rtx-4090)
+    - [Inference](#inference)
+    - [Memory Usage](#memory-usage)
+  - [Important Design Decisions](#important-design-decisions)
+    - [Why QLoRA?](#why-qlora)
+    - [Why Multiple Users in One Model?](#why-multiple-users-in-one-model)
+    - [Why TF-IDF + Keywords?](#why-tf-idf--keywords)
+    - [Why Separate Training/Bot Containers?](#why-separate-trainingbot-containers)
+  - [Environment Variables](#environment-variables)
+  - [Documentation Files](#documentation-files)
+    - [For Users](#for-users)
+    - [For Developers](#for-developers)
+    - [Templates](#templates)
+  - [Dependencies](#dependencies)
+    - [Core (Required)](#core-required)
+    - [Optional](#optional)
+    - [Cloud](#cloud)
+  - [Known Limitations](#known-limitations)
+  - [Future Enhancements (Not Yet Implemented)](#future-enhancements-not-yet-implemented)
+  - [Getting Help as Claude](#getting-help-as-claude)
+  - [Quick Commands Reference](#quick-commands-reference)
+  - [Project Status](#project-status)
+    - [Completed Features](#completed-features)
+    - [Test Coverage](#test-coverage)
+  - [License \& Ethics](#license--ethics)
+  - [Contact \& Support](#contact--support)
+
+
 # Claude AI Project Context
 
 This file provides context for Claude (or other AI assistants) working on this Reddit Chatbot project.
@@ -66,9 +119,9 @@ All source code lives in the `litigpt/` package, organized by function:
 - **Training Time**: 2-3 hours for 2000 comments on RTX 4090
 
 ### Multi-User System
-**Training**: Each example includes username in system prompt
+**Training**: Each example includes username in system prompt (in Italian, since the bot targets an Italian subreddit)
 ```python
-System: "You are alice, a Reddit user. Respond in alice's style."
+System: "Sei alice, un utente di Reddit. Rispondi nello stile e nel tono di scrittura di alice."
 User: [context]
 Assistant: [alice's response]
 ```

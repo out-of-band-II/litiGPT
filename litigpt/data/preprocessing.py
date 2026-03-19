@@ -11,6 +11,8 @@ from pathlib import Path
 import polars as pl
 from argparse import ArgumentParser
 
+from litigpt.prompts import build_system_prompt, build_alpaca_instruction
+
 logger = logging.getLogger(__name__)
 
 class RedditDataPreprocessor:
@@ -72,6 +74,7 @@ class RedditDataPreprocessor:
 
         # Filter by score (optional - only keep upvoted content)
         if 'score' in df.columns:
+            df = df.with_columns(pl.col('score').cast(pl.Int64, strict=False))
             df = df.filter(pl.col('score') > 0)
 
         logger.info(f"After filtering: {len(df)} entries")
@@ -170,8 +173,7 @@ class RedditDataPreprocessor:
         return "\n".join(formatted)
 
     def format_for_training(self, pairs: List[Dict],
-                           format_type: str = "chatml",
-                           multi_user: bool = False) -> List[Dict]:
+                           format_type: str = "chatml") -> List[Dict]:
         """
         Format training pairs for specific model format
 
@@ -183,7 +185,6 @@ class RedditDataPreprocessor:
         Args:
             pairs: Training pairs
             format_type: Format to use
-            multi_user: Whether this is multi-user training
         """
 
         formatted_data = []
@@ -192,11 +193,7 @@ class RedditDataPreprocessor:
             username = pair.get('username', 'unknown')
 
             if format_type == "chatml":
-                # System prompt changes based on multi-user mode
-                if multi_user:
-                    system_content = f"You are {username}, a Reddit user. Respond in {username}'s writing style and tone."
-                else:
-                    system_content = "You are a helpful Reddit user responding to comments in a conversational manner."
+                system_content = build_system_prompt(username)
 
                 formatted = {
                     "messages": [
@@ -212,37 +209,22 @@ class RedditDataPreprocessor:
                             "role": "assistant",
                             "content": pair['response']
                         }
-                    ]
+                    ],
+                    "username": username,
                 }
-
-                # Add username metadata for tracking
-                if multi_user:
-                    formatted['username'] = username
 
             elif format_type == "alpaca":
-                if multi_user:
-                    instruction = f"Respond to the following Reddit conversation as {username} would:"
-                else:
-                    instruction = "Respond to the following Reddit conversation:"
-
                 formatted = {
-                    "instruction": instruction,
+                    "instruction": build_alpaca_instruction(username),
                     "input": pair['context'],
-                    "output": pair['response']
+                    "output": pair['response'],
+                    "username": username,
                 }
 
-                if multi_user:
-                    formatted['username'] = username
-
             else:  # raw
-                if multi_user:
-                    formatted = {
-                        "text": f"### User: {username}\n### Context:\n{pair['context']}\n\n### Response:\n{pair['response']}"
-                    }
-                else:
-                    formatted = {
-                        "text": f"### Context:\n{pair['context']}\n\n### Response:\n{pair['response']}"
-                    }
+                formatted = {
+                    "text": f"### User: {username}\n### Context:\n{pair['context']}\n\n### Response:\n{pair['response']}"
+                }
 
             formatted_data.append(formatted)
 
