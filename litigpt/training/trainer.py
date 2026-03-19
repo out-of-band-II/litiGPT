@@ -8,10 +8,9 @@ from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     BitsAndBytesConfig,
-    TrainingArguments,
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from trl.trainer.sft_trainer import SFTTrainer
+from trl import SFTTrainer, SFTConfig
 from datasets import load_dataset
 import os
 
@@ -133,8 +132,8 @@ class RedditModelTrainer:
             remove_columns=dataset["train"].column_names
         )
         
-        # Training arguments
-        training_args = TrainingArguments(
+        # Training arguments (SFTConfig = TrainingArguments + SFT-specific params)
+        training_args = SFTConfig(
             output_dir=self.output_dir,
             num_train_epochs=num_epochs,
             per_device_train_batch_size=batch_size,
@@ -146,7 +145,7 @@ class RedditModelTrainer:
             lr_scheduler_type="cosine",
             warmup_ratio=0.05,
             logging_steps=10,
-            evaluation_strategy="steps",
+            eval_strategy="steps",
             eval_steps=50,
             save_strategy="steps",
             save_steps=100,
@@ -154,18 +153,18 @@ class RedditModelTrainer:
             fp16=True,
             report_to="tensorboard",
             load_best_model_at_end=True,
+            max_length=max_seq_length,
+            dataset_text_field="text",
+            packing=False,
         )
-        
+
         # Initialize trainer
         trainer = SFTTrainer(
             model=model,
             args=training_args,
             train_dataset=dataset["train"],
             eval_dataset=dataset["validation"],
-            tokenizer=tokenizer,
-            max_seq_length=max_seq_length,
-            dataset_text_field="text",
-            packing=False,
+            processing_class=tokenizer,
         )
         
         # Train
@@ -255,5 +254,8 @@ if __name__ == "__main__":
     
     print(f"\nView results at: {tracker.tracking_uri}")
     
-    # Optional: merge and save full model
+    # Optional: merge LoRA adapters into the base model weights to produce a
+    # single standalone model (no adapter files). Useful for Ollama/vLLM
+    # deployments that don't support PEFT adapters natively. Costs extra VRAM
+    # and disk space; skip unless you need a self-contained model file.
     # trainer.merge_and_save_full_model()

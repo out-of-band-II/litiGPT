@@ -519,7 +519,7 @@ HTML_TEMPLATE = """
     <div class="container">
         <div class="header">
             <h1>
-                <span>🤖</span>
+                <span>[Bot]</span>
                 <span>Reddit Bot Chat</span>
             </h1>
             <div class="status" id="status">Ready</div>
@@ -550,7 +550,7 @@ HTML_TEMPLATE = """
 
         <div class="chat-area" id="chatArea">
             <div class="message assistant">
-                <div class="avatar">🤖</div>
+                <div class="avatar">[Bot]</div>
                 <div class="content">
                     <div class="role">Assistant</div>
                     <div class="text">Hi! I'm your Reddit bot. Ask me anything!</div>
@@ -612,7 +612,7 @@ HTML_TEMPLATE = """
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${role}`;
             
-            const avatar = role === 'user' ? '👤' : '🤖';
+            const avatar = role === 'user' ? '[You]' : '[Bot]';
             const roleText = role === 'user' ? 'You' : 'Assistant';
             
             messageDiv.innerHTML = `

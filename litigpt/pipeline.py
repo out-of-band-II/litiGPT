@@ -8,12 +8,8 @@ import yaml
 from pathlib import Path
 import sys
 
-# Import all modules
 from litigpt.data.extraction import RedditDataExtractor
 from litigpt.data.preprocessing import RedditDataPreprocessor
-from litigpt.training.trainer import RedditModelTrainer
-from litigpt.inference.generator import RedditBotInference
-from litigpt.deployment.reddit_bot import RedditBot
 
 class PipelineRunner:
     def __init__(self, config_path: str = "config.yaml"):
@@ -28,26 +24,25 @@ class PipelineRunner:
     
     def run_data_extraction(self):
         """Step 1: Extract user data from Reddit JSONL files"""
-        
+
         print("\n[1/5] EXTRACTING DATA")
         print("-" * 60)
-        
+
         config = self.config['data']
+        usernames = config['target_usernames']
         extractor = RedditDataExtractor(config['raw_dir'])
-        
-        # Extract user data
-        user_data = extractor.extract_user_data(
-            username=config['target_username'],
+
+        users_data = extractor.extract_multiple_users(
+            usernames=usernames,
             comments_file=config.get("comments_filename", "comments.jsonl"),
             posts_file=config.get("submission_filename", "submissions.jsonl")
         )
-        
-        # Save
-        output_path = f"{config['processed_dir']}/user_data.jsonl"
-        extractor.save_processed_data(user_data, output_path)
-        
-        print(f"✓ Extracted {len(user_data)} items from {config['target_username']}")
-        return user_data
+
+        extractor.save_multi_user_data(users_data, config['processed_dir'])
+
+        total = sum(len(d) for d in users_data.values())
+        print(f"[OK] Extracted {total} items for {usernames}")
+        return users_data
     
     def run_preprocessing(self):
         """Step 2: Preprocess and format data for training"""
@@ -63,27 +58,30 @@ class PipelineRunner:
             max_length=config['max_comment_length']
         )
 
-        # Load user data (Polars)
-        processed_file = Path(f"{config['processed_dir']}/user_data.jsonl")
-        if processed_file.suffix == '.parquet':
-            user_data = pl.read_parquet(str(processed_file))
-        else:
-            user_data = pl.read_ndjson(str(processed_file), infer_schema_length=None)
+        # Load per-user parquet files saved by run_data_extraction
+        processed_dir = Path(config['processed_dir'])
+        users_data = {
+            p.stem.replace("_data", ""): pl.read_parquet(p)
+            for p in sorted(processed_dir.glob("*_data.parquet"))
+        }
+        if not users_data:
+            raise FileNotFoundError(
+                f"No *_data.parquet files found in {processed_dir}. Run extraction first."
+            )
 
         # Load all comments for context
-        comments_path = config.get("comments_filename", "comments.jsonl")
         extractor = RedditDataExtractor(config['raw_dir'])
-        all_comments = extractor.load_data(comments_path)
+        all_comments = extractor.load_data(config.get("comments_filename", "comments.jsonl"))
 
-        # Filter quality
-        user_data = preprocessor.filter_quality(user_data)
-        
-        # Create training pairs
-        pairs = preprocessor.create_training_pairs(user_data, all_comments)
-        
+        # Filter quality per user
+        users_data = {u: preprocessor.filter_quality(d) for u, d in users_data.items()}
+
+        # Create training pairs for all users
+        pairs = preprocessor.create_multi_user_training_pairs(users_data, all_comments)
+
         if len(pairs) < 100:
-            print(f"⚠️  Warning: Only {len(pairs)} training pairs. Consider using a user with more comments.")
-        
+            print(f"[WARNING]  Warning: Only {len(pairs)} training pairs. Consider using a user with more comments.")
+
         # Format for training
         formatted = preprocessor.format_for_training(pairs, format_type="chatml")
         
@@ -93,15 +91,16 @@ class PipelineRunner:
         # Save
         preprocessor.save_training_data(train, val, config['training_dir'])
         
-        print(f"✓ Created {len(train)} training and {len(val)} validation examples")
+        print(f"[OK] Created {len(train)} training and {len(val)} validation examples")
         return len(train), len(val)
     
     def run_training(self):
         """Step 3: Fine-tune the model"""
-        
+        from litigpt.training.trainer import RedditModelTrainer
+
         print("\n[3/5] TRAINING MODEL")
         print("-" * 60)
-        
+
         model_config = self.config['model']
         training_config = self.config['training']
         data_config = self.config['data']
@@ -126,14 +125,15 @@ class PipelineRunner:
             max_seq_length=training_config['max_seq_length']
         )
         
-        print(f"✓ Model trained and saved to {model_config['output_dir']}")
+        print(f"[OK] Model trained and saved to {model_config['output_dir']}")
     
     def run_evaluation(self):
         """Step 4: Test the model interactively"""
-        
+        from litigpt.inference.generator import RedditBotInference
+
         print("\n[4/5] EVALUATING MODEL")
         print("-" * 60)
-        
+
         model_config = self.config['model']
         inference_config = self.config['inference']
         
@@ -174,14 +174,15 @@ class PipelineRunner:
         if choice == 'y':
             bot.interactive_mode()
         
-        print("✓ Evaluation complete")
+        print("[OK] Evaluation complete")
     
     def run_deployment(self):
         """Step 5: Deploy bot to Reddit"""
-        
+        from litigpt.deployment.reddit_bot import RedditBot
+
         print("\n[5/5] DEPLOYING BOT")
         print("-" * 60)
-        
+
         model_config = self.config['model']
         bot_config = self.config['bot']
         inference_config = self.config['inference']
@@ -189,7 +190,7 @@ class PipelineRunner:
         print(f"Target subreddit: r/{bot_config['subreddit']}")
         print(f"Reply probability: {bot_config['reply_probability']}")
         
-        print("\n⚠️  IMPORTANT: Make sure you have:")
+        print("\n[WARNING]  IMPORTANT: Make sure you have:")
         print("1. Created a Reddit app at https://www.reddit.com/prefs/apps")
         print("2. Added credentials to .env file")
         print("3. Read the subreddit rules about bots")
@@ -215,7 +216,7 @@ class PipelineRunner:
         )
         
         # Run bot
-        print("\n✓ Bot deployed! Press Ctrl+C to stop.\n")
+        print("\n[OK] Bot deployed! Press Ctrl+C to stop.\n")
         bot.run()
     
     def run_full_pipeline(self):
@@ -229,7 +230,7 @@ class PipelineRunner:
             train_size, val_size = self.run_preprocessing()
             
             if train_size < 50:
-                print("\n⚠️  Warning: Very small training set. Model may not learn effectively.")
+                print("\n[WARNING]  Warning: Very small training set. Model may not learn effectively.")
                 print("Continue anyway? (y/n): ", end="")
                 if input().strip().lower() != 'y':
                     return
@@ -252,7 +253,7 @@ class PipelineRunner:
         except KeyboardInterrupt:
             print("\n\nPipeline interrupted by user.")
         except Exception as e:
-            print(f"\n❌ Error: {e}")
+            print(f"\n[ERROR] Error: {e}")
             import traceback
             traceback.print_exc()
 

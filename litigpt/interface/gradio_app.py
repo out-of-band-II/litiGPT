@@ -168,7 +168,7 @@ class GradioChatInterface:
         with gr.Blocks(css=css, title="Reddit Bot Chat") as demo:
             gr.Markdown(
                 """
-                # 🤖 Reddit Bot Chat Interface
+                # [Bot] Reddit Bot Chat Interface
                 Chat with your fine-tuned Reddit bot!
                 """
             )

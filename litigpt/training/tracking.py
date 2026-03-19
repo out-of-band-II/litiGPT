@@ -249,8 +249,10 @@ class ModelEvaluator:
 # Integration with training module
 def integrate_mlflow_with_trainer(trainer, tracker: MLflowTracker, config: dict):
     """
-    Integrate MLflow tracking with the training process
-    This would be added to litigpt/training/trainer.py
+    Integrate MLflow tracking with the training process.
+    Dead code / design example - the trainer's __main__ block already does
+    this inline. If you want callbacks during training, wire MLflowCallback
+    into the HuggingFace Trainer via trainer.add_callback().
     """
     
     # Start MLflow run

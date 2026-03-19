@@ -151,7 +151,7 @@ def process_reddit_jsonl_to_parquet(
                     row[col] = str(row[col])
         df = pl.DataFrame(batch, schema=fixed_schema)
 
-        # Cast created_utc from string epoch → Datetime
+        # Cast created_utc from string epoch to Datetime
         if 'created_utc' in df.columns:
             df = df.with_columns(
                 pl.col('created_utc')
@@ -188,7 +188,7 @@ def process_reddit_jsonl_to_parquet(
     file_size_mb = Path(output_file).stat().st_size / (1024 * 1024)
     logger.info(f"Saved {total_rows} records to {output_file} ({file_size_mb:.2f} MB)")
 
-    # Return a lightweight reference — read back from parquet (lazy scan, no full load)
+    # Return a lightweight reference - read back from parquet (lazy scan, no full load)
     return pl.scan_parquet(output_file).head(5).collect()
 
 

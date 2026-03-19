@@ -74,6 +74,7 @@ class RedditDataPreprocessor:
 
         # Filter by score (optional - only keep upvoted content)
         if 'score' in df.columns:
+            df = df.with_columns(pl.col('score').cast(pl.Int64, strict=False))
             df = df.filter(pl.col('score') > 0)
 
         logger.info(f"After filtering: {len(df)} entries")
