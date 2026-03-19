@@ -146,6 +146,19 @@ class PipelineRunner:
                 mlflow.log_metric("train_size", train_size)
                 mlflow.log_metric("val_size", val_size)
 
+            # Resolve report_to: config value or auto-detect best available backend
+            report_to = training_config.get('report_to', 'auto')
+            if report_to == 'auto':
+                if mlflow.active_run() is not None:
+                    report_to = 'mlflow'
+                else:
+                    try:
+                        import tensorboard  # noqa: F401
+                        report_to = 'tensorboard'
+                    except ImportError:
+                        report_to = 'none'
+            print(f"Reporting to: {report_to}")
+
             print(f"Base model: {model_config['base_model']}")
             print(f"Output: {model_config['output_dir']}")
             print(f"Epochs: {training_config['num_epochs']}")
@@ -163,7 +176,7 @@ class PipelineRunner:
                 batch_size=training_config['batch_size'],
                 learning_rate=training_config['learning_rate'],
                 max_seq_length=training_config['max_seq_length'],
-                report_to="mlflow",
+                report_to=report_to,
             )
 
             # Log LoRA adapter config (small file, captures adapter architecture)
