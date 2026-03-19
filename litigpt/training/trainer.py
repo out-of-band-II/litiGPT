@@ -43,7 +43,6 @@ class RedditModelTrainer:
             self.model_name,
             quantization_config=bnb_config,
             device_map="auto",
-            trust_remote_code=True,
             dtype=self.compute_dtype,  # non-quantized tensors (embeds, norms, LoRA) match compute dtype
         )
         
