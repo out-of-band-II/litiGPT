@@ -1,0 +1,75 @@
+# Dockerfile.bot
+# Lightweight container for bot deployment (CPU inference)
+
+FROM python:3.10-slim
+
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    wget \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Upgrade pip
+RUN pip install --upgrade pip setuptools wheel
+
+# Install PyTorch CPU version (much smaller)
+RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+# Install bot dependencies
+RUN pip install \
+    transformers>=4.36.0 \
+    accelerate>=0.24.0 \
+    peft>=0.7.0 \
+    bitsandbytes>=0.41.0 \
+    polars>=1.37.1 \
+    pyarrow>=21.0.0 \
+    scikit-learn>=1.3.0 \
+    numpy>=1.24.0 \
+    praw>=7.7.0 \
+    python-dotenv>=1.0.0 \
+    pyyaml>=6.0 \
+    jsonlines>=4.0.0
+
+# Set working directory
+WORKDIR /app
+
+# Copy package and config
+COPY litigpt/ litigpt/
+COPY config.yaml .
+
+# Create necessary directories
+RUN mkdir -p models logs
+
+# Health check - verify bot can start
+HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
+    CMD python -c "import praw; import transformers" || exit 1
+
+# Run bot
+CMD ["python", "-m", "litigpt.deployment.reddit_bot"]
+
+# Build command:
+# docker build -f Dockerfile.bot -t reddit-chatbot-bot:latest .
+#
+# Run command:
+# docker run -d \
+#   --name reddit-bot \
+#   -v $(pwd)/models:/app/models \
+#   -v $(pwd)/logs:/app/logs \
+#   -v $(pwd)/.env:/app/.env \
+#   -v $(pwd)/config.yaml:/app/config.yaml \
+#   --restart unless-stopped \
+#   reddit-chatbot-bot:latest
+#
+# View logs:
+# docker logs -f reddit-bot
+#
+# Stop bot:
+# docker stop reddit-bot
+#
+# Restart bot:
+# docker restart reddit-bot

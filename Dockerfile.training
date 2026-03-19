@@ -1,0 +1,91 @@
+# Dockerfile.training
+# Container for model training with GPU support
+
+FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
+
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    python3.10 \
+    python3-pip \
+    git \
+    wget \
+    curl \
+    vim \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set Python 3.10 as default
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1
+RUN update-alternatives --install /usr/bin/pip pip /usr/bin/pip3 1
+
+# Upgrade pip
+RUN pip install --upgrade pip setuptools wheel
+
+# Install PyTorch with CUDA 11.8 support
+RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# Install training dependencies
+RUN pip install \
+    transformers>=4.36.0 \
+    datasets>=2.14.0 \
+    accelerate>=0.24.0 \
+    peft>=0.7.0 \
+    trl>=0.7.0 \
+    bitsandbytes>=0.41.0 \
+    polars>=1.37.1 \
+    pyarrow>=21.0.0 \
+    zstandard>=0.24.0 \
+    numpy>=1.24.0 \
+    jsonlines>=4.0.0 \
+    scikit-learn>=1.3.0 \
+    tqdm>=4.65.0 \
+    pyyaml>=6.0 \
+    tensorboard>=2.14.0 \
+    mlflow>=2.8.0
+
+# Optional: Install wandb for experiment tracking
+RUN pip install wandb>=0.15.0
+
+# Set working directory
+WORKDIR /workspace
+
+# Copy package and config
+COPY litigpt/ litigpt/
+COPY config.yaml .
+COPY requirements.txt .
+
+# Create necessary directories
+RUN mkdir -p data/raw data/processed data/training models logs mlruns
+
+# Set environment variables
+ENV TRANSFORMERS_CACHE=/workspace/.cache/huggingface
+ENV HF_HOME=/workspace/.cache/huggingface
+ENV CUDA_VISIBLE_DEVICES=0
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import torch; assert torch.cuda.is_available()" || exit 1
+
+# Default command
+CMD ["python", "-m", "litigpt.training.trainer"]
+
+# Build command:
+# docker build -f Dockerfile.training -t reddit-chatbot-training:latest .
+#
+# Run command (with GPU):
+# docker run --gpus all \
+#   -v $(pwd)/data:/workspace/data \
+#   -v $(pwd)/models:/workspace/models \
+#   -v $(pwd)/mlruns:/workspace/mlruns \
+#   -v $(pwd)/config.yaml:/workspace/config.yaml \
+#   -e WANDB_API_KEY=your_key \
+#   reddit-chatbot-training:latest
+#
+# Interactive mode:
+# docker run --gpus all -it \
+#   -v $(pwd)/data:/workspace/data \
+#   -v $(pwd)/models:/workspace/models \
+#   reddit-chatbot-training:latest bash
