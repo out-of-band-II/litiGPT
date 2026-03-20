@@ -4,6 +4,7 @@ Orchestrate the entire pipeline from data to deployment
 """
 
 import argparse
+import logging
 from pathlib import Path
 import sys
 
@@ -11,20 +12,21 @@ from litigpt.config import Config
 from litigpt.data.extraction import RedditDataExtractor
 from litigpt.data.preprocessing import RedditDataPreprocessor
 
+logger = logging.getLogger(__name__)
+
 class PipelineRunner:
     def __init__(self, config_path: str = "config.yaml"):
         """Initialize pipeline with configuration"""
         self.config = Config.from_yaml(config_path)
-
-        print("=" * 60)
-        print("Reddit Chatbot Pipeline")
-        print("=" * 60)
+        logger.info("=" * 60)
+        logger.info("Reddit Chatbot Pipeline")
+        logger.info("=" * 60)
 
     def run_data_extraction(self):
         """Step 1: Extract user data from Reddit JSONL files"""
 
-        print("\n[1/5] EXTRACTING DATA")
-        print("-" * 60)
+        logger.info("[1/5] EXTRACTING DATA")
+        logger.info("-" * 60)
 
         data = self.config.data
         extractor = RedditDataExtractor(data.raw_dir)
@@ -38,14 +40,14 @@ class PipelineRunner:
         extractor.save_multi_user_data(users_data, data.processed_dir)
 
         total = sum(len(d) for d in users_data.values())
-        print(f"[OK] Extracted {total} items for {data.target_usernames}")
+        logger.info("Extracted %d items for %s", total, data.target_usernames)
         return users_data
 
     def run_preprocessing(self):
         """Step 2: Preprocess and format data for training"""
 
-        print("\n[2/5] PREPROCESSING DATA")
-        print("-" * 60)
+        logger.info("[2/5] PREPROCESSING DATA")
+        logger.info("-" * 60)
 
         import polars as pl
 
@@ -77,18 +79,20 @@ class PipelineRunner:
         pairs = preprocessor.create_multi_user_training_pairs(users_data, all_comments)
 
         if len(pairs) < 100:
-            print(f"[WARNING]  Warning: Only {len(pairs)} training pairs. Consider using a user with more comments.")
+            logger.warning("Only %d training pairs. Consider using a user with more comments.", len(pairs))
 
         # Format for training
         formatted = preprocessor.format_for_training(pairs, format_type="chatml")
 
         # Split
-        train, val = preprocessor.split_data(formatted, train_ratio=0.9)
+        train, val = preprocessor.split_data(
+            formatted, train_ratio=self.config.training.train_ratio
+        )
 
         # Save
         preprocessor.save_training_data(train, val, data.training_dir)
 
-        print(f"[OK] Created {len(train)} training and {len(val)} validation examples")
+        logger.info("Created %d training and %d validation examples", len(train), len(val))
         return len(train), len(val)
 
     def run_training(self):
@@ -96,11 +100,13 @@ class PipelineRunner:
         from litigpt.training.trainer import RedditModelTrainer
         from litigpt.training.tracking import MLflowTracker
         import mlflow
+        import torch
         import jsonlines
         import os
+        from collections import Counter
 
-        print("\n[3/5] TRAINING MODEL")
-        print("-" * 60)
+        logger.info("[3/5] TRAINING MODEL")
+        logger.info("-" * 60)
 
         model_cfg = self.config.model
         training_cfg = self.config.training
@@ -131,16 +137,39 @@ class PipelineRunner:
             if Path("config.yaml").exists():
                 mlflow.log_artifact("config.yaml")
 
-            # Log dataset sizes
+            # Log dataset sizes and data quality metrics
             train_path = Path(data_cfg.training_dir) / "train.jsonl"
             val_path = Path(data_cfg.training_dir) / "val.jsonl"
             if train_path.exists() and val_path.exists():
                 with jsonlines.open(train_path) as r:
-                    train_size = sum(1 for _ in r)
+                    train_examples = list(r)
+                train_size = len(train_examples)
                 with jsonlines.open(val_path) as r:
                     val_size = sum(1 for _ in r)
                 mlflow.log_metric("train_size", train_size)
                 mlflow.log_metric("val_size", val_size)
+
+                # Data quality: response lengths and per-user sample counts
+                response_lengths = []
+                user_counts = Counter()
+                for ex in train_examples:
+                    msgs = ex.get("messages", [])
+                    if msgs:
+                        response_lengths.append(len(msgs[-1].get("content", "")))
+                    user_counts[ex.get("username", "unknown")] += 1
+                if response_lengths:
+                    mlflow.log_metric("avg_response_length", sum(response_lengths) / len(response_lengths))
+                for user, count in user_counts.items():
+                    mlflow.log_metric(f"user_{user}_samples", count)
+                mlflow.log_metric("effective_batch_size",
+                                  training_cfg.batch_size * training_cfg.gradient_accumulation_steps)
+
+            # Hardware and environment info
+            mlflow.log_param("pytorch_version", torch.__version__)
+            mlflow.log_param("cuda_available", torch.cuda.is_available())
+            if torch.cuda.is_available():
+                mlflow.log_param("gpu_name", torch.cuda.get_device_name(0))
+                mlflow.log_param("cuda_version", torch.version.cuda)
 
             # Resolve report_to: collect all available backends
             backends = []
@@ -152,13 +181,14 @@ class PipelineRunner:
             except ImportError:
                 pass
             report_to = backends if backends else "none"
-            print(f"Reporting to: {report_to}")
+            logger.info("Reporting to: %s", report_to)
+            logger.info("Base model: %s", model_cfg.base_model)
+            logger.info("Output: %s", model_cfg.output_dir)
+            logger.info("Epochs: %d", training_cfg.num_epochs)
+            logger.info("Batch size: %d", training_cfg.batch_size)
+            logger.info("Learning rate: %s", training_cfg.learning_rate)
 
-            print(f"Base model: {model_cfg.base_model}")
-            print(f"Output: {model_cfg.output_dir}")
-            print(f"Epochs: {training_cfg.num_epochs}")
-            print(f"Batch size: {training_cfg.batch_size}")
-            print(f"Learning rate: {training_cfg.learning_rate}")
+            lora_cfg = self.config.lora
 
             trainer = RedditModelTrainer(
                 model_name=model_cfg.base_model,
@@ -171,6 +201,11 @@ class PipelineRunner:
                 batch_size=training_cfg.batch_size,
                 learning_rate=training_cfg.learning_rate,
                 max_seq_length=training_cfg.max_seq_length,
+                gradient_accumulation_steps=training_cfg.gradient_accumulation_steps,
+                lora_r=lora_cfg.r,
+                lora_alpha=lora_cfg.lora_alpha,
+                lora_dropout=lora_cfg.lora_dropout,
+                lora_target_modules=lora_cfg.target_modules,
                 report_to=report_to,
             )
 
@@ -180,7 +215,7 @@ class PipelineRunner:
                 mlflow.log_artifact(str(adapter_config), artifact_path="model")
 
             mlflow.set_tag("model_local_path", model_cfg.output_dir)
-            print(f"[OK] Model trained and saved to {model_cfg.output_dir}")
+            logger.info("Model trained and saved to %s", model_cfg.output_dir)
 
         finally:
             tracker.end_run()
@@ -188,9 +223,12 @@ class PipelineRunner:
     def run_evaluation(self):
         """Step 4: Test the model interactively"""
         from litigpt.inference.generator import RedditBotInference
+        from litigpt.training.tracking import MLflowTracker
+        import mlflow
+        import os
 
-        print("\n[4/5] EVALUATING MODEL")
-        print("-" * 60)
+        logger.info("[4/5] EVALUATING MODEL")
+        logger.info("-" * 60)
 
         model_cfg = self.config.model
         inference_cfg = self.config.inference
@@ -202,7 +240,7 @@ class PipelineRunner:
             load_in_4bit=True,
         )
 
-        print("Model loaded. Testing with sample contexts...\n")
+        logger.info("Model loaded. Testing with sample contexts...")
 
         # Test examples
         test_contexts = [
@@ -211,6 +249,7 @@ class PipelineRunner:
             "user3: This subreddit has really grown lately!",
         ]
 
+        samples = []
         for i, context in enumerate(test_contexts, 1):
             print(f"Test {i}:")
             print(f"Context: {context}")
@@ -224,6 +263,20 @@ class PipelineRunner:
 
             print(f"Response: {response}\n")
             print("-" * 60)
+            samples.append({"context": context, "response": response})
+
+        # Log sample outputs to MLflow if tracking is available
+        try:
+            tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "file:./mlruns")
+            tracker = MLflowTracker(
+                experiment_name="reddit-chatbot-training",
+                tracking_uri=tracking_uri,
+            )
+            tracker.start_run(run_name="evaluation_samples")
+            tracker.log_sample_outputs(samples)
+            tracker.end_run()
+        except Exception:
+            pass  # MLflow is optional for evaluation
 
         # Interactive mode option
         print("\nWould you like to test interactively? (y/n): ", end="")
@@ -232,32 +285,33 @@ class PipelineRunner:
         if choice == "y":
             bot.interactive_mode()
 
-        print("[OK] Evaluation complete")
+        logger.info("Evaluation complete")
 
     def run_deployment(self):
         """Step 5: Deploy bot to Reddit"""
         from litigpt.deployment.reddit_bot import RedditBot
 
-        print("\n[5/5] DEPLOYING BOT")
-        print("-" * 60)
+        logger.info("[5/5] DEPLOYING BOT")
+        logger.info("-" * 60)
 
         model_cfg = self.config.model
         bot_cfg = self.config.bot
 
-        print(f"Target subreddit: r/{bot_cfg.subreddit}")
-        print(f"Reply probability: {bot_cfg.reply_probability}")
+        logger.info("Target subreddit: r/%s", bot_cfg.subreddit)
+        logger.info("Reply probability: %s", bot_cfg.reply_probability)
 
-        print("\n[WARNING]  IMPORTANT: Make sure you have:")
-        print("1. Created a Reddit app at https://www.reddit.com/prefs/apps")
-        print("2. Added credentials to .env file")
-        print("3. Read the subreddit rules about bots")
-        print("4. Consider adding a bot disclaimer to responses")
+        logger.warning(
+            "Make sure you have: 1) Created a Reddit app, "
+            "2) Added credentials to .env, "
+            "3) Read subreddit rules about bots, "
+            "4) Added a bot disclaimer to responses"
+        )
 
         print("\nReady to deploy? (y/n): ", end="")
         choice = input().strip().lower()
 
         if choice != "y":
-            print("Deployment cancelled.")
+            logger.info("Deployment cancelled.")
             return
 
         # Initialize bot
@@ -272,10 +326,11 @@ class PipelineRunner:
             cooldown_seconds=bot_cfg.cooldown_seconds,
             available_users=bot_cfg.available_users or None,
             user_classifier_path=bot_cfg.user_classifier_path,
+            inference_config=self.config.inference.model_dump(),
         )
 
         # Run bot
-        print("\n[OK] Bot deployed! Press Ctrl+C to stop.\n")
+        logger.info("Bot deployed! Press Ctrl+C to stop.")
         bot.run()
 
     def run_full_pipeline(self):
@@ -289,7 +344,7 @@ class PipelineRunner:
             train_size, val_size = self.run_preprocessing()
 
             if train_size < 50:
-                print("\n[WARNING]  Warning: Very small training set. Model may not learn effectively.")
+                logger.warning("Very small training set (%d). Model may not learn effectively.", train_size)
                 print("Continue anyway? (y/n): ", end="")
                 if input().strip().lower() != "y":
                     return
@@ -305,16 +360,14 @@ class PipelineRunner:
             if input().strip().lower() == "y":
                 self.run_deployment()
 
-            print("\n" + "=" * 60)
-            print("PIPELINE COMPLETE!")
-            print("=" * 60)
+            logger.info("=" * 60)
+            logger.info("PIPELINE COMPLETE!")
+            logger.info("=" * 60)
 
         except KeyboardInterrupt:
-            print("\n\nPipeline interrupted by user.")
+            logger.info("Pipeline interrupted by user.")
         except Exception as e:
-            print(f"\n[ERROR] Error: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error("Error: %s", e, exc_info=True)
 
 def main():
     parser = argparse.ArgumentParser(description="Reddit Chatbot Pipeline")

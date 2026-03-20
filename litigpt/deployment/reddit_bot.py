@@ -8,13 +8,15 @@ from praw.models import Comment
 import time
 import logging
 import random
+from collections import deque
 from datetime import datetime
-from typing import Optional, Set, List
+from typing import Optional, List
 import os
 from dotenv import load_dotenv
 
 # Import inference module
 from litigpt.inference.generator import RedditBotInference
+from litigpt.model_utils import DEFAULT_USERNAME, DEFAULT_BASE_MODEL
 
 # Setup logging
 logging.basicConfig(
@@ -38,7 +40,8 @@ class RedditBot:
                  cooldown_seconds: int = 60,
                  available_users: Optional[List[str]] = None,
                  user_classifier_path: Optional[str] = None,
-                 max_depth: int = 3):
+                 max_depth: int = 3,
+                 inference_config: Optional[dict] = None):
         """
         Initialize Reddit bot.
 
@@ -88,6 +91,11 @@ class RedditBot:
                 logging.info(f"Loaded user classifier for: {self.available_users}")
             except FileNotFoundError:
                 logging.warning(f"Classifier not found at {user_classifier_path}, using random selection")
+            except Exception as e:
+                logging.warning(f"Failed to load classifier from {user_classifier_path}: {e}. Using random selection")
+
+        # Inference settings
+        self.inference_config = inference_config or {}
 
         # Bot settings
         self.trigger_keywords = trigger_keywords or []
@@ -95,16 +103,41 @@ class RedditBot:
         self.min_score_threshold = min_score_threshold
         self.cooldown_seconds = cooldown_seconds
 
-        # Track processed comments
-        self.processed_ids: Set[str] = set()
+        # Track processed comments (bounded to prevent unbounded memory growth)
+        self._processed_ids = deque(maxlen=10000)
+        self._processed_set: set = set()
         self.last_reply_time = 0
         self.max_depth = max_depth
 
         logging.info(f"Bot initialized for r/{subreddit_name}")
         logging.info(f"Available users: {', '.join(self.available_users) or '(default)'}")
 
+    def _mark_processed(self, comment_id: str):
+        """Mark a comment as processed, evicting oldest if at capacity."""
+        if comment_id in self._processed_set:
+            return
+        if len(self._processed_ids) == self._processed_ids.maxlen:
+            evicted = self._processed_ids[0]
+            self._processed_set.discard(evicted)
+        self._processed_ids.append(comment_id)
+        self._processed_set.add(comment_id)
+
+    def _is_processed(self, comment_id: str) -> bool:
+        return comment_id in self._processed_set
+
     def _init_reddit_api(self) -> praw.Reddit:
         """Initialize PRAW Reddit API client"""
+
+        required_vars = [
+            "REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET",
+            "REDDIT_USER_AGENT", "REDDIT_USERNAME", "REDDIT_PASSWORD",
+        ]
+        missing = [v for v in required_vars if not os.getenv(v)]
+        if missing:
+            raise EnvironmentError(
+                f"Missing required environment variables: {', '.join(missing)}. "
+                "Add them to your .env file."
+            )
 
         reddit = praw.Reddit(
             client_id=os.getenv("REDDIT_CLIENT_ID"),
@@ -129,7 +162,7 @@ class RedditBot:
             return False
 
         # Skip already processed
-        if comment.id in self.processed_ids:
+        if self._is_processed(comment.id):
             return False
 
         # Check score threshold
@@ -208,7 +241,7 @@ class RedditBot:
             logging.info(f"Randomly selected user: {selected}")
             return selected
 
-        return "anonimo"
+        return DEFAULT_USERNAME
 
     def generate_and_post_reply(self, comment):
         """Generate response and post it"""
@@ -226,9 +259,9 @@ class RedditBot:
             response = self.bot_inference.generate_response(
                 context,
                 username=username,
-                max_new_tokens=200,
-                temperature=0.8,
-                top_p=0.9,
+                max_new_tokens=self.inference_config.get("max_new_tokens", 256),
+                temperature=self.inference_config.get("temperature", 0.8),
+                top_p=self.inference_config.get("top_p", 0.9),
             )
 
             logging.info(f"Generated response: {response}")
@@ -241,7 +274,7 @@ class RedditBot:
             comment.reply(full_response)
 
             # Update tracking
-            self.processed_ids.add(comment.id)
+            self._mark_processed(comment.id)
             self.last_reply_time = time.time()
 
             logging.info(f"Posted reply to comment {comment.id}")
@@ -261,12 +294,7 @@ class RedditBot:
                         logging.info(f"\nProcessing comment {comment.id} by {comment.author}")
                         self.generate_and_post_reply(comment)
                     else:
-                        # Mark as processed to avoid checking again
-                        self.processed_ids.add(comment.id)
-
-                        # Limit memory usage
-                        if len(self.processed_ids) > 10000:
-                            self.processed_ids = set(list(self.processed_ids)[-5000:])
+                        self._mark_processed(comment.id)
 
                 except Exception as e:
                     logging.error(f"Error processing comment: {e}")
@@ -284,7 +312,7 @@ class RedditBot:
         logging.info("Monitoring mentions...")
 
         for mention in self.reddit.inbox.mentions(limit=25):
-            if mention.id not in self.processed_ids:
+            if not self._is_processed(mention.id):
                 try:
                     logging.info(f"Processing mention from {mention.author}")
                     self.generate_and_post_reply(mention)
@@ -308,7 +336,7 @@ class RedditBot:
 if __name__ == "__main__":
     bot = RedditBot(
         model_path="models/reddit_bot_lora",
-        base_model="meta-llama/Llama-3.1-8B-Instruct",
+        base_model=DEFAULT_BASE_MODEL,
         subreddit_name="test",
         bot_username="litiGPT",
         trigger_keywords=None,

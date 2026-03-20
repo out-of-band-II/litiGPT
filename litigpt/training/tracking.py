@@ -3,12 +3,16 @@ Module 8: MLflow Experiment Tracking
 Track training experiments, model versions, and metrics
 """
 
+import logging
+
 import mlflow
 import mlflow.pytorch
 from pathlib import Path
 from typing import Dict, Any
 import pandas as pd
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 class MLflowTracker:
     def __init__(self, 
@@ -25,8 +29,8 @@ class MLflowTracker:
         mlflow.set_experiment(experiment_name)
         self.experiment_name = experiment_name
         
-        print(f"MLflow tracking initialized: {tracking_uri}")
-        print(f"Experiment: {experiment_name}")
+        logger.info("MLflow tracking initialized: %s", tracking_uri)
+        logger.info("Experiment: %s", experiment_name)
     
     def start_run(self, run_name: str = None, tags: Dict[str, str] = None):
         """Start a new MLflow run"""
@@ -34,7 +38,7 @@ class MLflowTracker:
             run_name = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
         mlflow.start_run(run_name=run_name, tags=tags)
-        print(f"Started MLflow run: {run_name}")
+        logger.info("Started MLflow run: %s", run_name)
         return mlflow.active_run()
     
     def log_config(self, config: Dict[str, Any]):
@@ -94,7 +98,7 @@ class MLflowTracker:
     def end_run(self):
         """End the current MLflow run"""
         mlflow.end_run()
-        print("MLflow run ended")
+        logger.info("MLflow run ended")
     
     def _flatten_dict(self, d: Dict, parent_key: str = '', sep: str = '.') -> Dict:
         """Flatten nested dictionary"""
@@ -119,19 +123,20 @@ class MLflowTracker:
             max_results=n_best
         )
         
-        print(f"\nTop {n_best} runs by {metric}:")
-        print("-" * 80)
-        
+        logger.info("Top %d runs by %s:", n_best, metric)
+
         results = []
         for i, run in enumerate(runs, 1):
             metrics = run.data.metrics
             params = run.data.params
-            
-            print(f"{i}. Run ID: {run.info.run_id}")
-            print(f"   {metric}: {metrics.get(metric, 'N/A')}")
-            print(f"   Learning rate: {params.get('training.learning_rate', 'N/A')}")
-            print(f"   Epochs: {params.get('training.num_epochs', 'N/A')}")
-            print()
+
+            logger.info(
+                "%d. Run %s — %s: %s, lr: %s, epochs: %s",
+                i, run.info.run_id,
+                metric, metrics.get(metric, "N/A"),
+                params.get("training.learning_rate", "N/A"),
+                params.get("training.num_epochs", "N/A"),
+            )
             
             results.append({
                 'run_id': run.info.run_id,
@@ -152,7 +157,7 @@ class MLflowTracker:
         best_run_id = best_runs[0]['run_id']
         model_uri = f"runs:/{best_run_id}/model"
         
-        print(f"Loading best model from run: {best_run_id}")
+        logger.info("Loading best model from run: %s", best_run_id)
         return mlflow.pytorch.load_model(model_uri)
 
 class ModelEvaluator:
@@ -244,44 +249,6 @@ class ModelEvaluator:
             'min_similarity': similarities.min(),
             'max_similarity': similarities.max()
         }
-
-# Integration with training module
-def integrate_mlflow_with_trainer(trainer, tracker: MLflowTracker, config: dict):
-    """
-    Integrate MLflow tracking with the training process.
-    Dead code / design example - the trainer's __main__ block already does
-    this inline. If you want callbacks during training, wire MLflowCallback
-    into the HuggingFace Trainer via trainer.add_callback().
-
-    Accepts a plain dict (e.g. from Config.model_dump()).
-    """
-
-    # Start MLflow run
-    users = config.get("data", {}).get("target_usernames", [])
-    users_label = "_".join(users) if users else "unknown"
-    run_name = f"reddit_bot_{users_label}"
-    tracker.start_run(run_name=run_name, tags={
-        "model": config.get("model", {}).get("base_model", ""),
-        "users": ",".join(users),
-    })
-
-    # Log config
-    tracker.log_config(config)
-    
-    # Add callback for logging metrics during training
-    class MLflowCallback:
-        def __init__(self, tracker):
-            self.tracker = tracker
-        
-        def on_epoch_end(self, epoch, logs):
-            self.tracker.log_training_metrics(
-                epoch=epoch,
-                train_loss=logs.get('train_loss'),
-                val_loss=logs.get('val_loss'),
-                learning_rate=logs.get('learning_rate')
-            )
-    
-    return MLflowCallback(tracker)
 
 if __name__ == "__main__":
     # Example usage

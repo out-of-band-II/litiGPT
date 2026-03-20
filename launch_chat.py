@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from litigpt.model_utils import DEFAULT_BASE_MODEL
+
 def check_dependencies():
     """Check if required packages are installed"""
     missing = []
@@ -110,7 +112,7 @@ Examples:
 
     parser.add_argument(
         "--base-model",
-        default="meta-llama/Llama-3.1-8B-Instruct",
+        default=DEFAULT_BASE_MODEL,
         help="Base model identifier (default: Llama-3.1-8B)"
     )
 

@@ -140,7 +140,7 @@ class RedditDataExtractor:
                 pid = item.get('parent_id', '')
                 try:
                     parent_id = pid.split('_')[-1]
-                except Exception:
+                except (AttributeError, ValueError):
                     logger.error(f"Error processing parent_id for {item}")
                     continue
                 if parent_id not in comments_by_parent:
