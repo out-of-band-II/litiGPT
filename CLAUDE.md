@@ -9,8 +9,6 @@
     - [Data Format](#data-format)
   - [File Structure](#file-structure)
   - [Configuration](#configuration)
-    - [Single-User Mode](#single-user-mode)
-    - [Multi-User Mode](#multi-user-mode)
   - [Common Tasks](#common-tasks)
     - [For Claude: Helping with Code Issues](#for-claude-helping-with-code-issues)
     - [For Claude: Adding Features](#for-claude-adding-features)
@@ -59,7 +57,7 @@ This file provides context for Claude (or other AI assistants) working on this R
 
 **Reddit Chatbot Pipeline** - A complete, production-ready system for creating Reddit bots that mimic specific users' writing styles using fine-tuned language models.
 
-**Key Innovation:** Supports both single-user and multi-user modes, where one model can learn multiple personalities and automatically select which to use based on conversation context.
+**Key Innovation:** One model can learn multiple personalities and automatically select which to use based on conversation context. The system is unified — prompts always include the username, whether training on one user or many.
 
 ## Project Architecture
 
@@ -95,7 +93,7 @@ All source code lives in the `litigpt/` package, organized by function:
    - `ollama.py`: Ollama-compatible API server
 
 6. **Config & Pipeline**:
-   - `litigpt/config.py`: Configuration and environment setup
+   - `litigpt/config.py`: Pydantic configuration models (validated, typed)
    - `litigpt/pipeline.py`: Orchestrates entire workflow
 
 ### Infrastructure
@@ -181,27 +179,21 @@ reddit-chatbot/
 
 ## Configuration
 
-### Single-User Mode
+Configuration is validated via Pydantic models defined in `litigpt/config.py`.
+Load with `Config.from_yaml("config.yaml")` — provides autocomplete, validation,
+and typed attribute access (`config.data.target_usernames`).
+
+There is no separate `multi_user` flag. The system is unified: prompts always
+include the username. Single-user is just `target_usernames` with one entry.
+
 ```yaml
 data:
-  target_username: "specific_user"
-  multi_user: false
-
-bot:
-  multi_user: false
-```
-
-### Multi-User Mode
-```yaml
-data:
-  multi_user: true
   target_usernames:
     - "alice_tech"
     - "bob_gaming"
     - "charlie_fitness"
 
 bot:
-  multi_user: true
   available_users: ["alice_tech", "bob_gaming", "charlie_fitness"]
   user_classifier_path: "models/user_classifier.pkl"
 ```
@@ -216,10 +208,10 @@ bot:
 - `deployment.reddit_bot` uses `inference.generator` & `inference.classifier`
 
 **When debugging:**
-1. Check which mode (single vs multi-user)
-2. Verify data exists and is formatted correctly
-3. Ensure GPU availability for training
-4. Check system prompts include username (multi-user)
+1. Verify data exists and is formatted correctly
+2. Ensure GPU availability for training
+3. Check system prompts include username
+4. Validate config loads: `Config.from_yaml("config.yaml")`
 
 **Common Issues:**
 - OOM: Reduce batch_size, max_seq_length
@@ -379,7 +371,8 @@ MLFLOW_TRACKING_URI=...       # Optional: http://localhost:5000
 - torch ≥2.0.0
 - transformers ≥4.36.0
 - datasets, accelerate, peft, trl, bitsandbytes
-- pandas, numpy, jsonlines, scikit-learn
+- polars, pyarrow, numpy, jsonlines, scikit-learn
+- pydantic ≥2.0.0, pyyaml
 - praw (Reddit API)
 
 ### Optional

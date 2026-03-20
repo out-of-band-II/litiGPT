@@ -228,11 +228,11 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
     # Single file example (explicit column set)
-    df = process_reddit_jsonl_to_parquet(
-        'data/raw/litigi_comments.jsonl',
-        'data/raw/litigi_comments.parquet',
-        cols=COMMENT_COLS,
-    )
+    # df = process_reddit_jsonl_to_parquet(
+    #     'data/raw/litigi_comments.jsonl',
+    #     'data/raw/litigi_comments.parquet',
+    #     cols=COMMENT_COLS,
+    # )
 
     # Or convert everything (auto-detects cols from filename):
-    # convert_all_reddit_data('data/raw')
+    convert_all_reddit_data('data/raw')

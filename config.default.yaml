@@ -4,11 +4,9 @@ data:
   comments_filename: "litigi_comments.parquet"
   processed_dir: "data/processed"
   training_dir: "data/training"
-  target_username: "specific_reddit_user"
   target_usernames:
     - "specific_reddit_user"
     - "another_user"
-  multi_user: false
   min_comment_length: 10
   max_comment_length: 512
   min_score: 1
@@ -42,7 +40,6 @@ inference:
 
 bot:
   subreddit: "test"
-  multi_user: false
   available_users: []
   user_classifier_path: "models/user_classifier.pkl"
   trigger_keywords: []  # Empty list = respond to all
@@ -50,3 +47,4 @@ bot:
   min_score_threshold: 1
   cooldown_seconds: 120
   max_context_depth: 3
+  bot_username: "your_bot_username"

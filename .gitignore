@@ -430,6 +430,7 @@ config.local.yaml
 config.override.yaml
 config.dev.yaml
 config.prod.yaml
+config.colab.yaml
 
 # ============================================
 # INCLUDE THESE (Override common ignores)
@@ -440,6 +441,7 @@ config.prod.yaml
 
 # Keep example configs (without secrets)
 !config.example.yaml
+!config.default.yaml
 !.env.example
 
 # Keep documentation

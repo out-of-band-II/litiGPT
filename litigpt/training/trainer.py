@@ -215,51 +215,51 @@ class RedditModelTrainer:
 
 if __name__ == "__main__":
     # Example usage with MLflow tracking
+    from litigpt.config import Config
     from litigpt.training.tracking import MLflowTracker
-    import yaml
-    
+
     # Load config
-    with open("config.yaml", 'r') as f:
-        config = yaml.safe_load(f)
-    
+    config = Config.from_yaml("config.yaml")
+
     # Initialize MLflow
     tracker = MLflowTracker(
         experiment_name="reddit-chatbot-training",
-        tracking_uri=os.getenv("MLFLOW_TRACKING_URI", "file:./mlruns")
+        tracking_uri=os.getenv("MLFLOW_TRACKING_URI", "file:./mlruns"),
     )
-    
+
     # Start run
-    run_name = f"train_{config['data']['target_username']}"
+    users_label = "_".join(config.data.target_usernames)
+    run_name = f"train_{users_label}"
     tracker.start_run(run_name=run_name, tags={
-        'model': config['model']['base_model'],
-        'user': config['data']['target_username']
+        "model": config.model.base_model,
+        "users": ",".join(config.data.target_usernames),
     })
-    
+
     # Log config
-    tracker.log_config(config)
-    
+    tracker.log_config(config.model_dump())
+
     # Initialize trainer
     trainer = RedditModelTrainer(
-        model_name=config['model']['base_model'],
-        output_dir=config['model']['output_dir']
+        model_name=config.model.base_model,
+        output_dir=config.model.output_dir,
     )
-    
+
     # Train with MLflow logging
     trainer.train(
-        data_dir=config['data']['training_dir'],
-        num_epochs=config['training']['num_epochs'],
-        batch_size=config['training']['batch_size'],
-        learning_rate=config['training']['learning_rate']
+        data_dir=config.data.training_dir,
+        num_epochs=config.training.num_epochs,
+        batch_size=config.training.batch_size,
+        learning_rate=config.training.learning_rate,
     )
-    
+
     # Log model
-    tracker.log_model(config['model']['output_dir'], model_name="reddit_bot")
-    
+    tracker.log_model(config.model.output_dir, model_name="reddit_bot")
+
     # End run
     tracker.end_run()
-    
+
     print(f"\nView results at: {tracker.tracking_uri}")
-    
+
     # Optional: merge LoRA adapters into the base model weights to produce a
     # single standalone model (no adapter files). Useful for Ollama/vLLM
     # deployments that don't support PEFT adapters natively. Costs extra VRAM

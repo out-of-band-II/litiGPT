@@ -16,7 +16,7 @@ Two professional chat interfaces to interact with your Reddit bot:
 pip install gradio flask
 
 # You should already have these from training
-pip install torch transformers peft bitsandbytes pyyaml
+pip install torch transformers peft bitsandbytes pyyaml pydantic
 ```
 
 ---
@@ -31,9 +31,6 @@ python launch_chat.py --model models/reddit_bot_lora
 
 # Ollama-style interface
 python launch_chat.py --interface ollama --model models/reddit_bot_lora
-
-# Multi-user bot
-python launch_chat.py --model models/reddit_bot_lora --multi-user
 
 # Public sharing (Gradio)
 python launch_chat.py --model models/reddit_bot_lora --share
@@ -88,15 +85,9 @@ python launch_chat.py --model models/reddit_bot_lora
 
 Then open your browser and start chatting!
 
-### Multi-User Bot
+### Multiple Users
 
-If you trained on multiple users:
-
-```bash
-python launch_chat.py --model models/reddit_bot_lora --multi-user
-```
-
-Select which user's style to use from the dropdown menu.
+If you trained on multiple users, the dropdown menu to select which user's style to use appears automatically.
 
 ### Public Demo
 
