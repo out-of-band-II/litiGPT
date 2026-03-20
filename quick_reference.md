@@ -22,12 +22,7 @@ docker-compose up -d mlflow
 ## 🚀 Quick Start
 
 ```bash
-# Full pipeline (local) - Single user
-python -m litigpt.pipeline --step all
-
-# Full pipeline - Multi-user
-# 1. Edit config.yaml to enable multi_user and list target_usernames
-# 2. Run pipeline
+# Full pipeline — list target_usernames in config.yaml, then:
 python -m litigpt.pipeline --step all
 
 # Step-by-step
@@ -37,7 +32,7 @@ python -m litigpt.pipeline --step train
 python -m litigpt.pipeline --step eval
 python -m litigpt.pipeline --step deploy
 
-# Build user classifier (multi-user only)
+# Build user classifier (for auto user selection)
 python -c "from litigpt.inference.classifier import build_user_classifier_from_data; \
 classifier = build_user_classifier_from_data('data/processed'); \
 classifier.save_profiles('models/user_classifier.pkl')"
@@ -47,7 +42,7 @@ docker-compose --profile training run --rm training
 docker-compose --profile bot up -d bot
 ```
 
-## 👥 Multi-User Commands
+## 👥 User Classification Commands
 
 ```bash
 # Extract multiple users
@@ -179,16 +174,17 @@ kubectl scale -n reddit-bot deployment/reddit-bot --replicas=3
 ### config.yaml
 ```yaml
 data:
-  target_username: "username_to_mimic"
-  
+  target_usernames:
+    - "username_to_mimic"
+
 model:
   base_model: "meta-llama/Llama-3.1-8B-Instruct"
-  
+
 training:
   num_epochs: 3
   batch_size: 4
   learning_rate: 2.0e-4
-  
+
 bot:
   subreddit: "test"
   reply_probability: 0.2
@@ -208,7 +204,7 @@ MLFLOW_TRACKING_URI=http://localhost:5000
 ## 🧪 Testing
 
 ```python
-# Interactive mode - Single user
+# Interactive mode
 from litigpt.inference.generator import RedditBotInference
 
 bot = RedditBotInference(
@@ -217,7 +213,7 @@ bot = RedditBotInference(
 )
 bot.interactive_mode()
 
-# Interactive mode - Multi-user
+# Interactive mode with user selection
 bot.interactive_mode(available_users=["alice", "bob", "charlie"])
 # Usage: @alice what's your opinion on Python?
 

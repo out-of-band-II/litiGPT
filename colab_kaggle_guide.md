@@ -41,7 +41,7 @@ The simplest approach is to clone the repo and run the pipeline directly.
 !nvidia-smi
 
 !pip install -q transformers datasets accelerate peft trl bitsandbytes
-!pip install -q polars jsonlines scikit-learn tqdm pyyaml mlflow praw
+!pip install -q polars jsonlines scikit-learn tqdm pyyaml pydantic mlflow praw
 ```
 
 **Cell 2: Mount Drive and clone repo**
@@ -239,7 +239,7 @@ trainer.train(
 ```python
 # Cell 1: Install
 !pip install -q transformers datasets accelerate peft trl bitsandbytes
-!pip install -q polars jsonlines scikit-learn tqdm pyyaml mlflow praw
+!pip install -q polars jsonlines scikit-learn tqdm pyyaml pydantic mlflow praw
 
 # Cell 2: Clone repo
 import os

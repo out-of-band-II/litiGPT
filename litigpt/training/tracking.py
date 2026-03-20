@@ -6,7 +6,6 @@ Track training experiments, model versions, and metrics
 import mlflow
 import mlflow.pytorch
 from pathlib import Path
-import yaml
 from typing import Dict, Any
 import pandas as pd
 from datetime import datetime
@@ -253,15 +252,19 @@ def integrate_mlflow_with_trainer(trainer, tracker: MLflowTracker, config: dict)
     Dead code / design example - the trainer's __main__ block already does
     this inline. If you want callbacks during training, wire MLflowCallback
     into the HuggingFace Trainer via trainer.add_callback().
+
+    Accepts a plain dict (e.g. from Config.model_dump()).
     """
-    
+
     # Start MLflow run
-    run_name = f"reddit_bot_{config['data']['target_username']}"
+    users = config.get("data", {}).get("target_usernames", [])
+    users_label = "_".join(users) if users else "unknown"
+    run_name = f"reddit_bot_{users_label}"
     tracker.start_run(run_name=run_name, tags={
-        'model': config['model']['base_model'],
-        'user': config['data']['target_username']
+        "model": config.get("model", {}).get("base_model", ""),
+        "users": ",".join(users),
     })
-    
+
     # Log config
     tracker.log_config(config)
     

@@ -5,16 +5,15 @@ Modern, terminal-inspired chat interface for Reddit bot
 
 from flask import Flask, render_template, request, jsonify, Response
 from pathlib import Path
-import yaml
 import json
 from typing import List, Dict, Optional
+from litigpt.config import Config
 from litigpt.prompts import build_system_prompt
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from peft import PeftModel
 from datetime import datetime
 import threading
-import queue
 
 app = Flask(__name__)
 
@@ -22,64 +21,57 @@ class OllamaChatInterface:
     def __init__(self,
                  model_path: str,
                  base_model: str,
-                 config_path: str = "config.yaml",
-                 multi_user: bool = False):
+                 config_path: str = "config.yaml"):
         """Initialize Ollama-style interface"""
-        
+
         self.model_path = Path(model_path)
-        self.config_path = Path(config_path)
-        self.multi_user = multi_user
-        
-        # Load config
-        with open(config_path, 'r') as f:
-            self.config = yaml.safe_load(f)
-        
+        self.config = Config.from_yaml(config_path)
+
         # Load model
         print("Loading model...")
         self.tokenizer, self.model = self._load_model(base_model)
         print("Model loaded successfully!")
-        
+
         # Load user metadata
-        self.available_users = []
-        if multi_user:
-            self._load_user_metadata()
-        
+        self.available_users: List[str] = []
+        self._load_user_metadata()
+
         # Conversation history
         self.conversations: Dict[str, List[Dict]] = {}
-    
+
     def _load_model(self, base_model: str):
         """Load the fine-tuned model"""
-        
+
         bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_use_double_quant=True,
             bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.float16
+            bnb_4bit_compute_dtype=torch.float16,
         )
-        
+
         tokenizer = AutoTokenizer.from_pretrained(base_model)
         tokenizer.pad_token = tokenizer.eos_token
-        
+
         model = AutoModelForCausalLM.from_pretrained(
             base_model,
             quantization_config=bnb_config,
             device_map="auto",
-            trust_remote_code=True
+            trust_remote_code=True,
         )
-        
+
         model = PeftModel.from_pretrained(model, self.model_path)
         model.eval()
-        
+
         return tokenizer, model
-    
+
     def _load_user_metadata(self):
         """Load available users"""
-        metadata_path = Path("data/processed/users_metadata.json")
+        metadata_path = Path(self.config.data.processed_dir) / "users_metadata.json"
         if metadata_path.exists():
-            with open(metadata_path, 'r') as f:
+            with open(metadata_path, "r") as f:
                 metadata = json.load(f)
-                self.available_users = metadata.get('users', [])
-    
+                self.available_users = metadata.get("users", [])
+
     def generate_response_stream(self,
                                 message: str,
                                 session_id: str,
@@ -87,13 +79,13 @@ class OllamaChatInterface:
                                 temperature: float = 0.8,
                                 max_tokens: int = 256):
         """Generate response with streaming"""
-        
+
         # Get conversation history
         if session_id not in self.conversations:
             self.conversations[session_id] = []
-        
+
         history = self.conversations[session_id]
-        
+
         # Build context
         conversation = []
         for msg in history:
@@ -102,16 +94,13 @@ class OllamaChatInterface:
             else:
                 conversation.append(f"assistant: {msg['content']}")
         conversation.append(f"user: {message}")
-        
+
         context = "\n".join(conversation)
-        
-        # Build prompt
-        if self.multi_user and username:
-            system_prompt = build_system_prompt(username)
-        else:
-            target_user = self.config['data'].get('target_username', 'anonimo')
-            system_prompt = build_system_prompt(target_user)
-        
+
+        # Build prompt — always include username
+        effective_user = username or (self.available_users[0] if self.available_users else "anonimo")
+        system_prompt = build_system_prompt(effective_user)
+
         prompt = f"""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
 
 {system_prompt}<|eot_id|><|start_header_id|>user<|end_header_id|>
@@ -119,19 +108,19 @@ class OllamaChatInterface:
 {context}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 
 """
-        
+
         # Tokenize
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
-        
+
         # Generate with streaming
         from transformers import TextIteratorStreamer
-        
+
         streamer = TextIteratorStreamer(
             self.tokenizer,
             skip_special_tokens=True,
-            skip_prompt=True
+            skip_prompt=True,
         )
-        
+
         generation_kwargs = dict(
             **inputs,
             max_new_tokens=max_tokens,
@@ -141,36 +130,36 @@ class OllamaChatInterface:
             repetition_penalty=1.1,
             do_sample=True,
             pad_token_id=self.tokenizer.pad_token_id,
-            streamer=streamer
+            streamer=streamer,
         )
-        
+
         # Start generation in thread
         thread = threading.Thread(target=self.model.generate, kwargs=generation_kwargs)
         thread.start()
-        
+
         # Stream tokens
         full_response = ""
         for new_text in streamer:
             full_response += new_text
             yield new_text
-        
+
         # Save to history
         self.conversations[session_id].append({
             'role': 'user',
             'content': message,
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now().isoformat(),
         })
-        
+
         self.conversations[session_id].append({
             'role': 'assistant',
             'content': full_response,
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now().isoformat(),
         })
-    
+
     def get_conversation(self, session_id: str) -> List[Dict]:
         """Get conversation history"""
         return self.conversations.get(session_id, [])
-    
+
     def clear_conversation(self, session_id: str):
         """Clear conversation history"""
         if session_id in self.conversations:
@@ -178,14 +167,13 @@ class OllamaChatInterface:
 
 
 # Global interface instance
-chat_interface = None
+chat_interface: Optional[OllamaChatInterface] = None
 
 
 @app.route('/')
 def index():
     """Render main chat interface"""
     return render_template('chat.html',
-                          multi_user=chat_interface.multi_user,
                           available_users=chat_interface.available_users)
 
 
@@ -198,19 +186,19 @@ def chat():
     username = data.get('username')
     temperature = data.get('temperature', 0.8)
     max_tokens = data.get('max_tokens', 256)
-    
+
     def generate():
         for chunk in chat_interface.generate_response_stream(
             message,
             session_id,
             username,
             temperature,
-            max_tokens
+            max_tokens,
         ):
             yield f"data: {json.dumps({'chunk': chunk})}\n\n"
-        
+
         yield f"data: {json.dumps({'done': True})}\n\n"
-    
+
     return Response(generate(), mimetype='text/event-stream')
 
 
@@ -232,10 +220,8 @@ def clear_history(session_id):
 def get_info():
     """Get bot info"""
     return jsonify({
-        'model': chat_interface.config['model']['base_model'],
-        'multi_user': chat_interface.multi_user,
+        'model': chat_interface.config.model.base_model,
         'available_users': chat_interface.available_users,
-        'target_user': chat_interface.config['data'].get('target_username')
     })
 
 
@@ -525,8 +511,8 @@ HTML_TEMPLATE = """
             <div class="status" id="status">Ready</div>
         </div>
 
-        {% if multi_user %}
         <div class="settings-bar">
+            {% if available_users %}
             <label>
                 User:
                 <select id="userSelect">
@@ -535,6 +521,7 @@ HTML_TEMPLATE = """
                     {% endfor %}
                 </select>
             </label>
+            {% endif %}
             <label>
                 Temperature:
                 <input type="range" id="temperature" min="0.1" max="1.5" step="0.1" value="0.8">
@@ -546,7 +533,6 @@ HTML_TEMPLATE = """
                 <span id="tokensValue">256</span>
             </label>
         </div>
-        {% endif %}
 
         <div class="chat-area" id="chatArea">
             <div class="message assistant">
@@ -567,8 +553,8 @@ HTML_TEMPLATE = """
 
         <div class="input-area">
             <div class="input-container">
-                <textarea 
-                    id="messageInput" 
+                <textarea
+                    id="messageInput"
                     placeholder="Type your message... (Shift+Enter for new line)"
                     rows="1"
                 ></textarea>
@@ -611,10 +597,10 @@ HTML_TEMPLATE = """
         function addMessage(role, text) {
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${role}`;
-            
+
             const avatar = role === 'user' ? '[You]' : '[Bot]';
             const roleText = role === 'user' ? 'You' : 'Assistant';
-            
+
             messageDiv.innerHTML = `
                 <div class="avatar">${avatar}</div>
                 <div class="content">
@@ -623,10 +609,10 @@ HTML_TEMPLATE = """
                     <div class="timestamp">${new Date().toLocaleTimeString()}</div>
                 </div>
             `;
-            
+
             chatArea.insertBefore(messageDiv, typingIndicator);
             chatArea.scrollTop = chatArea.scrollHeight;
-            
+
             return messageDiv;
         }
 
@@ -637,7 +623,7 @@ HTML_TEMPLATE = """
             // Add user message
             addMessage('user', message);
             messageInput.value = '';
-            
+
             // Show typing indicator
             typingIndicator.classList.add('active');
             status.textContent = 'Thinking...';
@@ -662,7 +648,7 @@ HTML_TEMPLATE = """
 
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
-                
+
                 let assistantMessage = addMessage('assistant', '');
                 let fullText = '';
 
@@ -671,18 +657,18 @@ HTML_TEMPLATE = """
                     if (done) break;
 
                     const chunk = decoder.decode(value);
-                    const lines = chunk.split('\n');
+                    const lines = chunk.split('\\n');
 
                     for (const line of lines) {
                         if (line.startsWith('data: ')) {
                             const data = JSON.parse(line.slice(6));
-                            
+
                             if (data.chunk) {
                                 fullText += data.chunk;
                                 assistantMessage.querySelector('.text').textContent = fullText;
                                 chatArea.scrollTop = chatArea.scrollHeight;
                             }
-                            
+
                             if (data.done) {
                                 typingIndicator.classList.remove('active');
                                 status.textContent = 'Ready';
@@ -731,48 +717,45 @@ def save_template():
     """Save HTML template"""
     templates_dir = Path("templates")
     templates_dir.mkdir(exist_ok=True)
-    
+
     template_path = templates_dir / "chat.html"
     with open(template_path, 'w') as f:
         f.write(HTML_TEMPLATE)
-    
+
     print(f"Template saved to {template_path}")
 
 
 def main():
     """Main function"""
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="Launch Ollama-Style Chat Interface")
     parser.add_argument("--model", required=True, help="Path to fine-tuned model")
     parser.add_argument("--base-model", default="meta-llama/Llama-3.1-8B-Instruct",
                        help="Base model identifier")
     parser.add_argument("--config", default="config.yaml", help="Config file path")
-    parser.add_argument("--multi-user", action="store_true",
-                       help="Enable multi-user mode")
     parser.add_argument("--port", type=int, default=5000, help="Server port")
     parser.add_argument("--host", default="127.0.0.1", help="Server host")
-    
+
     args = parser.parse_args()
-    
+
     # Save template
     save_template()
-    
+
     # Create interface
     global chat_interface
     chat_interface = OllamaChatInterface(
         model_path=args.model,
         base_model=args.base_model,
         config_path=args.config,
-        multi_user=args.multi_user
     )
-    
+
     print(f"\n{'='*60}")
     print("Reddit Bot Chat Interface")
     print(f"{'='*60}")
     print(f"\nServer starting on http://{args.host}:{args.port}")
     print(f"Press Ctrl+C to stop\n")
-    
+
     app.run(host=args.host, port=args.port, debug=False)
 
 

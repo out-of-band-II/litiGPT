@@ -21,7 +21,7 @@ pip install gradio
 pip install flask
 
 # Both interfaces need these (should already be installed)
-pip install torch transformers peft bitsandbytes pyyaml
+pip install torch transformers peft bitsandbytes pyyaml pydantic
 ```
 
 ---
@@ -38,21 +38,11 @@ pip install torch transformers peft bitsandbytes pyyaml
 
 ### Launch Command
 
-**Single-user bot:**
 ```bash
 python -m litigpt.interface.gradio_app \
   --model models/reddit_bot_lora \
   --base-model meta-llama/Llama-3.1-8B-Instruct \
   --config config.yaml
-```
-
-**Multi-user bot:**
-```bash
-python -m litigpt.interface.gradio_app \
-  --model models/reddit_bot_lora \
-  --base-model meta-llama/Llama-3.1-8B-Instruct \
-  --config config.yaml \
-  --multi-user
 ```
 
 **With public sharing:**
@@ -115,19 +105,10 @@ python -m litigpt.interface.gradio_app \
 
 ### Launch Command
 
-**Basic:**
 ```bash
 python -m litigpt.interface.ollama \
   --model models/reddit_bot_lora \
   --base-model meta-llama/Llama-3.1-8B-Instruct
-```
-
-**Multi-user:**
-```bash
-python -m litigpt.interface.ollama \
-  --model models/reddit_bot_lora \
-  --base-model meta-llama/Llama-3.1-8B-Instruct \
-  --multi-user
 ```
 
 **Custom host/port:**
@@ -188,14 +169,11 @@ python -m litigpt.interface.ollama \
 
 ## Advanced Usage
 
-### Multi-User Configuration
+### Multi-User Support
 
-Both interfaces support multi-user mode, which requires:
+Both interfaces auto-detect available users from the metadata file at `data/processed/users_metadata.json`. When multiple users are available, a user selector dropdown appears in the UI.
 
-1. **Trained multi-user model**
-2. **User metadata file** at `data/processed/users_metadata.json`
-
-The metadata file is automatically created when using `extract_multiple_users()` in Module 1.
+The metadata file is automatically created when using `extract_multiple_users()` during data extraction.
 
 ### Custom Styling (Ollama-Style)
 

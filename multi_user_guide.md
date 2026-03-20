@@ -93,21 +93,20 @@ Edit `config.yaml`:
 
 ```yaml
 data:
-  multi_user: true
   target_usernames:
     - "alice_tech"      # Tech enthusiast
     - "bob_gaming"      # Gaming expert
     - "charlie_fitness" # Fitness guru
-  min_comments_per_user: 100
 
 bot:
-  multi_user: true
   available_users:
     - "alice_tech"
     - "bob_gaming"
     - "charlie_fitness"
   user_classifier_path: "models/user_classifier.pkl"
 ```
+
+> **Note:** There is no separate `multi_user` flag. The system is unified: prompts always include the username, and multiple users are supported simply by listing them in `target_usernames` and `available_users`.
 
 ### 2. Extract User Data
 
@@ -334,10 +333,9 @@ bot = RedditBot(
     base_model="meta-llama/Llama-3.1-8B-Instruct",
     subreddit_name="test",
     bot_username="multi_personality_bot",
-    multi_user=True,
     available_users=["alice_tech", "bob_gaming", "charlie_fitness"],
     user_classifier_path="models/user_classifier.pkl",
-    reply_probability=0.2
+    reply_probability=0.2,
 )
 
 bot.run()
