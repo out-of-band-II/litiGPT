@@ -138,9 +138,9 @@ class RedditModelTrainer:
         )
         
         # Training arguments (SFTConfig = TrainingArguments + SFT-specific params)
+        os.environ["TENSORBOARD_LOGGING_DIR"] = os.path.join(self.output_dir, "logs")
         training_args = SFTConfig(
             output_dir=self.output_dir,
-            logging_dir=os.path.join(self.output_dir, "logs"),
             num_train_epochs=num_epochs,
             per_device_train_batch_size=batch_size,
             per_device_eval_batch_size=batch_size,
@@ -149,7 +149,7 @@ class RedditModelTrainer:
             optim="paged_adamw_32bit",
             learning_rate=learning_rate,
             lr_scheduler_type="cosine",
-            warmup_ratio=0.05,
+            warmup_steps=10,
             logging_steps=10,
             eval_strategy="steps",
             eval_steps=50,
