@@ -142,16 +142,16 @@ class PipelineRunner:
                 mlflow.log_metric("train_size", train_size)
                 mlflow.log_metric("val_size", val_size)
 
-            # Resolve report_to: auto-detect best available backend
-            report_to = "none"
+            # Resolve report_to: collect all available backends
+            backends = []
             if mlflow.active_run() is not None:
-                report_to = "mlflow"
-            else:
-                try:
-                    import tensorboard  # noqa: F401
-                    report_to = "tensorboard"
-                except ImportError:
-                    pass
+                backends.append("mlflow")
+            try:
+                import tensorboard  # noqa: F401
+                backends.append("tensorboard")
+            except ImportError:
+                pass
+            report_to = backends if backends else "none"
             print(f"Reporting to: {report_to}")
 
             print(f"Base model: {model_cfg.base_model}")
