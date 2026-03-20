@@ -4,6 +4,7 @@ Deploy bot to monitor and respond to Reddit comments
 """
 
 import praw
+from praw.models import Comment
 import time
 import logging
 import random
@@ -168,7 +169,7 @@ class RedditBot:
 
             try:
                 parent = current.parent()
-                if isinstance(parent, praw.models.Comment):
+                if isinstance(parent, Comment):
                     author = parent.author.name if parent.author else "[deleted]"
                     context_parts.insert(0, f"{author}: {parent.body}")
                     current = parent
