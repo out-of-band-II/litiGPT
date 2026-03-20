@@ -140,6 +140,7 @@ class RedditModelTrainer:
         # Training arguments (SFTConfig = TrainingArguments + SFT-specific params)
         training_args = SFTConfig(
             output_dir=self.output_dir,
+            logging_dir=os.path.join(self.output_dir, "logs"),
             num_train_epochs=num_epochs,
             per_device_train_batch_size=batch_size,
             per_device_eval_batch_size=batch_size,
