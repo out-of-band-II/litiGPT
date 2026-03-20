@@ -481,3 +481,6 @@ config.colab.yaml
 
 .claude
 .mcp*
+
+# Generated graphs
+*.dot

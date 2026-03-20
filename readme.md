@@ -98,22 +98,16 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 ### 2. Install Dependencies
 
 ```bash
-# Install PyTorch with CUDA support
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+# Install all dependencies (CPU-only torch by default)
+uv sync
 
-# Install other requirements
-pip install transformers datasets accelerate peft trl bitsandbytes
-pip install pandas numpy jsonlines scikit-learn
-pip install praw python-dotenv tqdm
-
-# Install MLflow for experiment tracking
-pip install mlflow
-
-# Optional: for faster inference
-pip install vllm
-
-# Optional: for training monitoring
-pip install tensorboard wandb
+# For GPU training, install PyTorch with CUDA support:
+# CUDA 12.6
+uv pip install torch --extra-index-url https://download.pytorch.org/whl/cu126 --reinstall
+# CUDA 12.4
+uv pip install torch --extra-index-url https://download.pytorch.org/whl/cu124 --reinstall
+# CUDA 11.8
+uv pip install torch --extra-index-url https://download.pytorch.org/whl/cu118 --reinstall
 ```
 
 ### 2b. Docker Setup (Alternative)
