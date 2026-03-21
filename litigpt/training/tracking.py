@@ -168,23 +168,10 @@ class ModelEvaluator:
     
     def evaluate_perplexity(self, test_data: list) -> float:
         """Calculate perplexity on test set"""
-        import torch
-        import numpy as np
-        
-        total_loss = 0
-        total_tokens = 0
-        
-        for example in test_data:
-            context = example.get('context', '')
-            target = example.get('response', '')
-            
-            # Get model's predicted probability
-            # This is simplified - full implementation would use model.forward()
-            # to get actual log probabilities
-            pass
-        
-        perplexity = np.exp(total_loss / total_tokens)
-        return perplexity
+        raise NotImplementedError(
+            "Perplexity evaluation is not yet implemented. "
+            "Requires model.forward() to compute log probabilities."
+        )
     
     def evaluate_response_quality(self, test_contexts: list) -> Dict[str, float]:
         """Evaluate response quality metrics"""

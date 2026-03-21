@@ -81,20 +81,17 @@ class RedditDataPreprocessor:
         return df
 
     def create_training_pairs(self, user_data: pl.DataFrame,
-                             all_comments: pl.DataFrame,
-                             username: str = None, raw_data_dir: str = "data/raw") -> List[Dict]:
+                             thread_data: Dict,
+                             username: str = None) -> List[Dict]:
         """
         Create (context, response) pairs for training
 
         Args:
             user_data: User's comments/posts (Polars DataFrame)
-            all_comments: All subreddit comments for context (Polars DataFrame)
+            thread_data: Pre-built conversation threads from RedditDataExtractor.build_conversation_threads
             username: Username to tag in training data (for multi-user)
         """
-        from litigpt.data.extraction import RedditDataExtractor
-
-        extractor = RedditDataExtractor(raw_data_dir)
-        thread_data = extractor.build_conversation_threads(all_comments)
+        from litigpt.data.extraction import get_context_for_comment
 
         training_pairs = []
 
@@ -104,7 +101,7 @@ class RedditDataPreprocessor:
                 continue
 
             # Get context
-            context_items = extractor.get_context_for_comment(
+            context_items = get_context_for_comment(
                 row,
                 thread_data,
                 max_context=3
@@ -136,13 +133,13 @@ class RedditDataPreprocessor:
 
     def create_multi_user_training_pairs(self,
                                         users_data: Dict[str, pl.DataFrame],
-                                        all_comments: pl.DataFrame) -> List[Dict]:
+                                        thread_data: Dict) -> List[Dict]:
         """
         Create training pairs for multiple users
 
         Args:
             users_data: Dictionary mapping username to their data (Polars DataFrames)
-            all_comments: All subreddit comments (Polars DataFrame)
+            thread_data: Pre-built conversation threads from RedditDataExtractor.build_conversation_threads
 
         Returns:
             List of training pairs with username tags
@@ -151,7 +148,7 @@ class RedditDataPreprocessor:
 
         for username, user_data in users_data.items():
             logger.info(f"Processing {username}...")
-            pairs = self.create_training_pairs(user_data, all_comments, username)
+            pairs = self.create_training_pairs(user_data, thread_data, username)
             all_pairs.extend(pairs)
 
         logger.info(f"Total training pairs: {len(all_pairs)}")
@@ -286,16 +283,17 @@ if __name__ == "__main__":
     # Load user data (Polars)
     user_data = pl.read_parquet(f"data/processed/{user}_data.parquet")
 
-    # Load all comments for context building
+    # Load all comments and build conversation threads for context
     from litigpt.data.extraction import RedditDataExtractor
     extractor = RedditDataExtractor(raw_data_dir)
     all_comments = extractor.load_data(comments_data_file)
+    thread_data = extractor.build_conversation_threads(all_comments)
 
     # Filter quality
     user_data = preprocessor.filter_quality(user_data)
 
     # Create training pairs
-    pairs = preprocessor.create_training_pairs(user_data, all_comments)
+    pairs = preprocessor.create_training_pairs(user_data, thread_data)
 
     # Format for training
     formatted = preprocessor.format_for_training(pairs, format_type="chatml")

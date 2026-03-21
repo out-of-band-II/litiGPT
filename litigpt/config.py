@@ -62,7 +62,6 @@ class InferenceConfig(BaseModel):
 class BotConfig(BaseModel):
     subreddit: str = "test"
     available_users: List[str] = []
-    user_classifier_path: str = "models/user_classifier.pkl"
     trigger_keywords: List[str] = []
     reply_probability: float = 0.2
     min_score_threshold: int = 1
@@ -72,7 +71,7 @@ class BotConfig(BaseModel):
 
 
 class UserClassificationConfig(BaseModel):
-    method: str = "tfidf"
+    strategy: str = "random"  # "random" or "keyword"
     user_keywords: Dict[str, List[str]] = {}
 
 

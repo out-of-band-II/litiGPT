@@ -158,27 +158,33 @@ class RedditDataExtractor:
     def get_context_for_comment(self, comment: Dict, thread_data: Dict,
                                 max_context: int = 5) -> List[Dict]:
         """Get parent comments/posts for context"""
-        context = []
-        current = comment
+        return get_context_for_comment(comment, thread_data, max_context)
 
-        for _ in range(max_context):
-            parent_id = current.get('parent_id', '').split('_')[-1]
-            if not parent_id:
-                break
 
-            # Check if parent is a comment
-            parent = thread_data['comments_by_id'].get(parent_id)
+def get_context_for_comment(comment: Dict, thread_data: Dict,
+                            max_context: int = 5) -> List[Dict]:
+    """Get parent comments/posts for context (standalone version)"""
+    context = []
+    current = comment
+
+    for _ in range(max_context):
+        parent_id = current.get('parent_id', '').split('_')[-1]
+        if not parent_id:
+            break
+
+        # Check if parent is a comment
+        parent = thread_data['comments_by_id'].get(parent_id)
+        if parent:
+            context.insert(0, parent)
+            current = parent
+        else:
+            # Check if parent is a post
+            parent = thread_data['posts_by_id'].get(parent_id)
             if parent:
                 context.insert(0, parent)
-                current = parent
-            else:
-                # Check if parent is a post
-                parent = thread_data['posts_by_id'].get(parent_id)
-                if parent:
-                    context.insert(0, parent)
-                break
+            break
 
-        return context
+    return context
 
 def data_extraction_parser():
     parser = ArgumentParser(description="Data extraction module",

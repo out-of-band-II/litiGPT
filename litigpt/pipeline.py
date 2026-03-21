@@ -57,26 +57,34 @@ class PipelineRunner:
             max_length=data.max_comment_length,
         )
 
-        # Load per-user parquet files saved by run_data_extraction
+        # Load per-user parquet files saved by run_data_extraction,
+        # filtered to only the users specified in config
         processed_dir = Path(data.processed_dir)
+        target_users = set(data.target_usernames)
         users_data = {
             p.stem.replace("_data", ""): pl.read_parquet(p)
             for p in sorted(processed_dir.glob("*_data.parquet"))
+            if p.stem.replace("_data", "") in target_users
         }
         if not users_data:
             raise FileNotFoundError(
-                f"No *_data.parquet files found in {processed_dir}. Run extraction first."
+                f"No *_data.parquet files found in {processed_dir} for configured users "
+                f"{data.target_usernames}. Run extraction first."
             )
+        missing = target_users - set(users_data.keys())
+        if missing:
+            logger.warning("No parquet files found for configured users: %s", missing)
 
-        # Load all comments for context
+        # Load all comments and build conversation threads for context
         extractor = RedditDataExtractor(data.raw_dir)
         all_comments = extractor.load_data(data.comments_filename)
+        thread_data = extractor.build_conversation_threads(all_comments)
 
         # Filter quality per user
         users_data = {u: preprocessor.filter_quality(d) for u, d in users_data.items()}
 
         # Create training pairs for all users
-        pairs = preprocessor.create_multi_user_training_pairs(users_data, all_comments)
+        pairs = preprocessor.create_multi_user_training_pairs(users_data, thread_data)
 
         if len(pairs) < 100:
             logger.warning("Only %d training pairs. Consider using a user with more comments.", len(pairs))
@@ -290,6 +298,7 @@ class PipelineRunner:
     def run_deployment(self):
         """Step 5: Deploy bot to Reddit"""
         from litigpt.deployment.reddit_bot import RedditBot
+        from litigpt.inference.classifier import RandomUserSelector, KeywordUserSelector
 
         logger.info("[5/5] DEPLOYING BOT")
         logger.info("-" * 60)
@@ -314,6 +323,13 @@ class PipelineRunner:
             logger.info("Deployment cancelled.")
             return
 
+        # Build user selector from config
+        user_cls_cfg = self.config.user_classification
+        if user_cls_cfg.strategy == "keyword" and user_cls_cfg.user_keywords:
+            user_selector = KeywordUserSelector(user_cls_cfg.user_keywords)
+        else:
+            user_selector = RandomUserSelector()
+
         # Initialize bot
         bot = RedditBot(
             model_path=model_cfg.output_dir,
@@ -325,7 +341,7 @@ class PipelineRunner:
             min_score_threshold=bot_cfg.min_score_threshold,
             cooldown_seconds=bot_cfg.cooldown_seconds,
             available_users=bot_cfg.available_users or None,
-            user_classifier_path=bot_cfg.user_classifier_path,
+            user_selector=user_selector,
             inference_config=self.config.inference.model_dump(),
         )
 

@@ -41,10 +41,13 @@ inference:
 bot:
   subreddit: "test"
   available_users: []
-  user_classifier_path: "models/user_classifier.pkl"
   trigger_keywords: []  # Empty list = respond to all
   reply_probability: 0.2
   min_score_threshold: 1
   cooldown_seconds: 120
   max_context_depth: 3
   bot_username: "your_bot_username"
+
+user_classification:
+  strategy: "random"  # "random" or "keyword"
+  user_keywords: {}

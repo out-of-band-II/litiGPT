@@ -103,7 +103,6 @@ bot:
     - "alice_tech"
     - "bob_gaming"
     - "charlie_fitness"
-  user_classifier_path: "models/user_classifier.pkl"
 ```
 
 > **Note:** There is no separate `multi_user` flag. The system is unified: prompts always include the username, and multiple users are supported simply by listing them in `target_usernames` and `available_users`.
@@ -334,7 +333,6 @@ bot = RedditBot(
     subreddit_name="test",
     bot_username="multi_personality_bot",
     available_users=["alice_tech", "bob_gaming", "charlie_fitness"],
-    user_classifier_path="models/user_classifier.pkl",
     reply_probability=0.2,
 )
 
