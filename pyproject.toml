@@ -2,8 +2,8 @@
 name = "litigpt"
 version = "0.1.0"
 description = "Add your description here"
-readme = "README.md"
-requires-python = ">=3.13"
+readme = "readme.md"
+requires-python = ">=3.11"
 dependencies = [
     "accelerate>=0.24.0",
     "bitsandbytes>=0.41.0",

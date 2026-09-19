@@ -55,14 +55,15 @@ WORKDIR /workspace
 
 # Copy package and config
 COPY litigpt/ litigpt/
-COPY config.yaml .
-COPY requirements.txt .
+COPY pyproject.toml requirements.txt ./
+# config.yaml is gitignored (user-specific); ship the tracked template and
+# let it be overridden at run time with -v or --config.
+COPY config.default.yaml ./config.yaml
 
 # Create necessary directories
 RUN mkdir -p data/raw data/processed data/training models logs mlruns
 
 # Set environment variables
-ENV TRANSFORMERS_CACHE=/workspace/.cache/huggingface
 ENV HF_HOME=/workspace/.cache/huggingface
 ENV CUDA_VISIBLE_DEVICES=0
 

@@ -348,10 +348,11 @@ MLFLOW_TRACKING_URI=...       # Optional: http://localhost:5000
 
 ### For Users
 - `README.md`: Complete setup guide
-- `QUICK_REFERENCE.md`: One-page cheat sheet
-- `DEPLOYMENT_GUIDE.md`: Cloud deployment
-- `MULTI_USER_GUIDE.md`: Multi-user setup
-- `CLOUD_GPU_TRAINING.md`: Colab/Kaggle guide
+- `quick_reference.md`: One-page cheat sheet
+- `deployment_guide.md`: Cloud deployment
+- `multi_user_guide.md`: Multi-user setup
+- `colab_kaggle_guide.md`: Colab/Kaggle guide
+- `cloud_training_guide.md`: RunPod GPU training
 
 ### For Developers
 - `ARCHITECTURE.md`: System diagrams

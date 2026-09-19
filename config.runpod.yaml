@@ -1,0 +1,73 @@
+# litiGPT configuration for RunPod GPU pods.
+#
+# Paths point at /workspace, RunPod's network volume, so data, adapters and
+# MLflow runs survive pod teardown. Tracked in git on purpose: it contains no
+# secrets (credentials come from the environment).
+#
+# Override per run with:  python -m litigpt.pipeline --step train --config config.runpod.yaml
+
+data:
+  raw_dir: "/workspace/data/raw"
+  submission_filename: "litigi_submissions.jsonl"
+  comments_filename: "litigi_comments.parquet"
+  processed_dir: "/workspace/data/processed"
+  training_dir: "/workspace/data/training"
+  target_usernames:
+    - "tommyrugby"
+  min_comment_length: 10
+  max_comment_length: 512
+  min_score: 1
+
+model:
+  # phi-3-mini is the cheapest useful base and needs no gated-repo access.
+  # For Llama/Mistral set HF_TOKEN on the pod first.
+  base_model: "microsoft/phi-3-mini-4k-instruct"
+  # Alternatives:
+  # - "mistralai/Mistral-7B-Instruct-v0.3"
+  # - "meta-llama/Llama-3.1-8B-Instruct"   (gated)
+  output_dir: "/workspace/models/reddit_bot_lora"
+
+training:
+  num_epochs: 3
+  # Sized for a 24GB card (RTX 4090 / A5000) at max_seq_length 512.
+  # On a 48GB A40 you can raise batch_size to 16 and drop grad accumulation to 2.
+  batch_size: 8
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-4
+  max_seq_length: 512
+  warmup_ratio: 0.05
+  train_ratio: 0.9
+
+lora:
+  r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+
+inference:
+  max_new_tokens: 256
+  temperature: 0.8
+  top_p: 0.9
+  top_k: 50
+  repetition_penalty: 1.1
+
+user_classification:
+  strategy: "random"   # "random" or "keyword"
+  user_keywords: {}
+
+bot:
+  subreddit: "test"
+  available_users: []
+  trigger_keywords: []
+  reply_probability: 0.2
+  min_score_threshold: 1
+  cooldown_seconds: 120
+  max_context_depth: 3
+  bot_username: "litiGPT"

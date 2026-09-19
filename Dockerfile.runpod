@@ -1,0 +1,62 @@
+# Dockerfile.runpod
+# Reproducible training image for RunPod GPU pods.
+#
+# The bootstrap script (scripts/runpod_bootstrap.sh) on a stock RunPod PyTorch
+# template is the lower-friction path and needs no registry. Use this image when
+# you want the environment pinned — repeated runs, or handing the job to someone
+# else.
+#
+# Build and push:
+#   docker build -f Dockerfile.runpod -t <registry>/litigpt-training:latest .
+#   docker push <registry>/litigpt-training:latest
+#
+# On RunPod: Pods -> Deploy -> Custom Container -> <registry>/litigpt-training:latest
+#   Volume mount path : /workspace
+#   Environment       : HF_TOKEN (gated bases), optional MLFLOW_TRACKING_URI
+
+FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    TOKENIZERS_PARALLELISM=false
+
+# Python 3.11 — the newest version with reliable wheels across the whole
+# bitsandbytes / peft / trl stack.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.11 python3.11-dev python3.11-venv python3-pip \
+        git curl ca-certificates openssh-client \
+    && rm -rf /var/lib/apt/lists/* \
+    && update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
+
+RUN python -m pip install --upgrade pip setuptools wheel
+
+# Torch first, from the CUDA 12.1 index, so the resolver can't pull a CPU build.
+RUN python -m pip install torch --index-url https://download.pytorch.org/whl/cu121
+
+WORKDIR /opt/litigpt
+
+# Dependency metadata first — this layer caches across source edits.
+COPY pyproject.toml readme.md ./
+COPY litigpt/ litigpt/
+RUN python -m pip install -e . && python -m pip install tensorboard
+
+# Tracked config templates. config.yaml is gitignored, so config.runpod.yaml is
+# the one that ships; override at run time with --config or a volume mount.
+COPY config.runpod.yaml config.default.yaml ./
+COPY scripts/ scripts/
+
+# Caches and outputs live on the mounted volume, not in the image layer.
+ENV HF_HOME=/workspace/.cache/huggingface \
+    MLFLOW_TRACKING_URI=file:/workspace/mlruns \
+    LITIGPT_CONFIG=config.runpod.yaml \
+    REPO_DIR=/opt/litigpt
+
+RUN python -c "import torch, transformers, peft, trl, bitsandbytes; print('training stack OK')"
+
+# Fail fast if the pod was started without a GPU attached.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD python -c "import torch; assert torch.cuda.is_available()" || exit 1
+
+CMD ["bash", "scripts/runpod_bootstrap.sh", "train"]
