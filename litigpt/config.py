@@ -4,11 +4,14 @@ Configuration module using Pydantic models.
 Loads settings from config.yaml with validation, defaults, and type safety.
 """
 
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional
 
 import yaml
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 class DataConfig(BaseModel):
@@ -35,12 +38,17 @@ class TrainingConfig(BaseModel):
     learning_rate: float = 2e-4
     max_seq_length: int = 512
     warmup_ratio: float = 0.05
+    train_ratio: float = 0.9
 
 
 class LoraConfig(BaseModel):
     r: int = 16
     lora_alpha: int = 32
     lora_dropout: float = 0.05
+    target_modules: List[str] = [
+        "q_proj", "k_proj", "v_proj", "o_proj",
+        "gate_proj", "up_proj", "down_proj",
+    ]
 
 
 class InferenceConfig(BaseModel):
@@ -54,7 +62,6 @@ class InferenceConfig(BaseModel):
 class BotConfig(BaseModel):
     subreddit: str = "test"
     available_users: List[str] = []
-    user_classifier_path: str = "models/user_classifier.pkl"
     trigger_keywords: List[str] = []
     reply_probability: float = 0.2
     min_score_threshold: int = 1
@@ -64,7 +71,7 @@ class BotConfig(BaseModel):
 
 
 class UserClassificationConfig(BaseModel):
-    method: str = "tfidf"
+    strategy: str = "random"  # "random" or "keyword"
     user_keywords: Dict[str, List[str]] = {}
 
 
@@ -99,4 +106,4 @@ def setup_project_structure():
     ]
     for directory in directories:
         Path(directory).mkdir(parents=True, exist_ok=True)
-        print(f"Created: {directory}")
+        logger.info("Created: %s", directory)

@@ -195,7 +195,6 @@ data:
 
 bot:
   available_users: ["alice_tech", "bob_gaming", "charlie_fitness"]
-  user_classifier_path: "models/user_classifier.pkl"
 ```
 
 ## Common Tasks

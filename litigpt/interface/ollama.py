@@ -3,17 +3,25 @@ Module 10: Ollama-Style Chat Interface
 Modern, terminal-inspired chat interface for Reddit bot
 """
 
+import logging
+
 from flask import Flask, render_template, request, jsonify, Response
 from pathlib import Path
 import json
+import torch
 from typing import List, Dict, Optional
 from litigpt.config import Config
 from litigpt.prompts import build_system_prompt
-import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
-from peft import PeftModel
+from litigpt.model_utils import (
+    load_model_and_tokenizer,
+    load_user_metadata,
+    DEFAULT_USERNAME,
+    DEFAULT_BASE_MODEL,
+)
 from datetime import datetime
 import threading
+
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
@@ -28,49 +36,20 @@ class OllamaChatInterface:
         self.config = Config.from_yaml(config_path)
 
         # Load model
-        print("Loading model...")
-        self.tokenizer, self.model = self._load_model(base_model)
-        print("Model loaded successfully!")
+        logger.info("Loading model...")
+        self.model, self.tokenizer, _ = load_model_and_tokenizer(
+            base_model=base_model,
+            adapter_path=model_path,
+        )
+        logger.info("Model loaded successfully!")
 
         # Load user metadata
-        self.available_users: List[str] = []
-        self._load_user_metadata()
+        self.available_users: List[str] = load_user_metadata(
+            self.config.data.processed_dir
+        )
 
         # Conversation history
         self.conversations: Dict[str, List[Dict]] = {}
-
-    def _load_model(self, base_model: str):
-        """Load the fine-tuned model"""
-
-        bnb_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.float16,
-        )
-
-        tokenizer = AutoTokenizer.from_pretrained(base_model)
-        tokenizer.pad_token = tokenizer.eos_token
-
-        model = AutoModelForCausalLM.from_pretrained(
-            base_model,
-            quantization_config=bnb_config,
-            device_map="auto",
-            trust_remote_code=True,
-        )
-
-        model = PeftModel.from_pretrained(model, self.model_path)
-        model.eval()
-
-        return tokenizer, model
-
-    def _load_user_metadata(self):
-        """Load available users"""
-        metadata_path = Path(self.config.data.processed_dir) / "users_metadata.json"
-        if metadata_path.exists():
-            with open(metadata_path, "r") as f:
-                metadata = json.load(f)
-                self.available_users = metadata.get("users", [])
 
     def generate_response_stream(self,
                                 message: str,
@@ -98,19 +77,21 @@ class OllamaChatInterface:
         context = "\n".join(conversation)
 
         # Build prompt — always include username
-        effective_user = username or (self.available_users[0] if self.available_users else "anonimo")
+        effective_user = username or (self.available_users[0] if self.available_users else DEFAULT_USERNAME)
         system_prompt = build_system_prompt(effective_user)
 
-        prompt = f"""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
-
-{system_prompt}<|eot_id|><|start_header_id|>user<|end_header_id|>
-
-{context}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
-
-"""
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": context},
+        ]
+        prompt = self.tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
 
         # Tokenize
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+        inputs = self.tokenizer(
+            prompt, return_tensors="pt", truncation=True, max_length=2048
+        ).to(self.model.device)
 
         # Generate with streaming
         from transformers import TextIteratorStreamer
@@ -731,7 +712,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="Launch Ollama-Style Chat Interface")
     parser.add_argument("--model", required=True, help="Path to fine-tuned model")
-    parser.add_argument("--base-model", default="meta-llama/Llama-3.1-8B-Instruct",
+    parser.add_argument("--base-model", default=DEFAULT_BASE_MODEL,
                        help="Base model identifier")
     parser.add_argument("--config", default="config.yaml", help="Config file path")
     parser.add_argument("--port", type=int, default=5000, help="Server port")

@@ -4,21 +4,20 @@ Generate responses using the fine-tuned model
 """
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-from peft import PeftModel
 from typing import List, Dict, Optional
 
 from litigpt.prompts import build_system_prompt
+from litigpt.model_utils import load_model_and_tokenizer, DEFAULT_USERNAME, DEFAULT_BASE_MODEL
 
 class RedditBotInference:
-    def __init__(self, 
+    def __init__(self,
                  model_path: str,
-                 base_model: str = "meta-llama/Llama-3.1-8B-Instruct",
+                 base_model: str = DEFAULT_BASE_MODEL,
                  use_lora: bool = True,
                  load_in_4bit: bool = True):
         """
         Initialize inference engine
-        
+
         Args:
             model_path: Path to fine-tuned model or LoRA adapters
             base_model: Base model name (if using LoRA)
@@ -28,51 +27,13 @@ class RedditBotInference:
         self.model_path = model_path
         self.base_model = base_model
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        
+
         # Load model and tokenizer
-        self.model, self.tokenizer = self._load_model(use_lora, load_in_4bit)
-        
-    def _load_model(self, use_lora: bool, load_in_4bit: bool):
-        """Load model and tokenizer"""
-        
-        print(f"Loading model from {self.model_path}")
-        
-        # Quantization config
-        if load_in_4bit:
-            bnb_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch.float16,
-            )
-        else:
-            bnb_config = None
-        
-        # Load base model
-        if use_lora:
-            model = AutoModelForCausalLM.from_pretrained(
-                self.base_model,
-                quantization_config=bnb_config,
-                device_map="auto",
-                trust_remote_code=True,
-            )
-            # Load LoRA adapters
-            model = PeftModel.from_pretrained(model, self.model_path)
-            tokenizer = AutoTokenizer.from_pretrained(self.model_path)
-        else:
-            # Load merged model
-            model = AutoModelForCausalLM.from_pretrained(
-                self.model_path,
-                quantization_config=bnb_config,
-                device_map="auto",
-                trust_remote_code=True,
-            )
-            tokenizer = AutoTokenizer.from_pretrained(self.model_path)
-        
-        tokenizer.pad_token = tokenizer.eos_token
-        model.eval()
-        
-        print("Model loaded successfully")
-        return model, tokenizer
+        self.model, self.tokenizer, _ = load_model_and_tokenizer(
+            base_model=base_model,
+            adapter_path=model_path if use_lora else None,
+            load_in_4bit=load_in_4bit,
+        )
     
     def format_prompt(self, context: str, 
                      system_prompt: Optional[str] = None,
@@ -89,7 +50,7 @@ class RedditBotInference:
             if username:
                 system_prompt = build_system_prompt(username)
             else:
-                system_prompt = build_system_prompt("anonimo")
+                system_prompt = build_system_prompt(DEFAULT_USERNAME)
         
         messages = [
             {"role": "system", "content": system_prompt},
@@ -220,45 +181,11 @@ class RedditBotInference:
             print(f"\nBot: {response}")
             print("-" * 50)
 
-class RedditBotInferenceVLLM:
-    """
-    Alternative inference using vLLM for faster generation
-    Requires: pip install vllm
-    """
-    def __init__(self, model_path: str):
-        from vllm import LLM, SamplingParams
-        
-        self.model_path = model_path
-        self.llm = LLM(
-            model=model_path,
-            tensor_parallel_size=1,
-            gpu_memory_utilization=0.9
-        )
-        
-    def generate_response(self,
-                         context: str,
-                         max_tokens: int = 256,
-                         temperature: float = 0.7,
-                         top_p: float = 0.9) -> str:
-        from vllm import SamplingParams
-        
-        # Format prompt (assuming ChatML format)
-        prompt = f"<|im_start|>system\n{build_system_prompt('anonimo')}<|im_end|>\n<|im_start|>user\n{context}<|im_end|>\n<|im_start|>assistant\n"
-        
-        sampling_params = SamplingParams(
-            temperature=temperature,
-            top_p=top_p,
-            max_tokens=max_tokens
-        )
-        
-        outputs = self.llm.generate([prompt], sampling_params)
-        return outputs[0].outputs[0].text.strip()
-
 if __name__ == "__main__":
     # Example usage with LoRA adapters
     bot = RedditBotInference(
         model_path="models/reddit_bot_lora",
-        base_model="meta-llama/Llama-3.1-8B-Instruct",
+        base_model=DEFAULT_BASE_MODEL,
         use_lora=True,
         load_in_4bit=True
     )

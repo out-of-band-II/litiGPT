@@ -8,23 +8,18 @@ from praw.models import Comment
 import time
 import logging
 import random
+from collections import deque
 from datetime import datetime
-from typing import Optional, Set, List
+from typing import Optional, List
 import os
 from dotenv import load_dotenv
 
 # Import inference module
 from litigpt.inference.generator import RedditBotInference
+from litigpt.inference.classifier import UserSelector, RandomUserSelector
+from litigpt.model_utils import DEFAULT_USERNAME, DEFAULT_BASE_MODEL
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('reddit_bot.log'),
-        logging.StreamHandler()
-    ]
-)
+logger = logging.getLogger(__name__)
 
 class RedditBot:
     def __init__(self,
@@ -37,13 +32,14 @@ class RedditBot:
                  min_score_threshold: int = 1,
                  cooldown_seconds: int = 60,
                  available_users: Optional[List[str]] = None,
-                 user_classifier_path: Optional[str] = None,
-                 max_depth: int = 3):
+                 user_selector: Optional[UserSelector] = None,
+                 max_depth: int = 3,
+                 inference_config: Optional[dict] = None):
         """
         Initialize Reddit bot.
 
         The bot always generates responses as a specific user. When multiple
-        users are configured it auto-selects via the classifier; when a single
+        users are configured it auto-selects via the user_selector; when a single
         user (or none) is configured it uses that user for every reply.
 
         Args:
@@ -56,7 +52,7 @@ class RedditBot:
             min_score_threshold: Minimum comment score to respond to
             cooldown_seconds: Seconds between responses
             available_users: List of users model can impersonate
-            user_classifier_path: Path to user classifier (for auto-selection)
+            user_selector: Strategy for selecting which user to respond as
             max_depth: Max parent comments for context
         """
 
@@ -78,16 +74,10 @@ class RedditBot:
 
         # User selection
         self.available_users = available_users or []
-        self.user_classifier = None
+        self.user_selector = user_selector or RandomUserSelector()
 
-        if self.available_users and user_classifier_path:
-            try:
-                from litigpt.inference.classifier import UserClassifier
-                self.user_classifier = UserClassifier()
-                self.user_classifier.load_profiles(user_classifier_path)
-                logging.info(f"Loaded user classifier for: {self.available_users}")
-            except FileNotFoundError:
-                logging.warning(f"Classifier not found at {user_classifier_path}, using random selection")
+        # Inference settings
+        self.inference_config = inference_config or {}
 
         # Bot settings
         self.trigger_keywords = trigger_keywords or []
@@ -95,16 +85,41 @@ class RedditBot:
         self.min_score_threshold = min_score_threshold
         self.cooldown_seconds = cooldown_seconds
 
-        # Track processed comments
-        self.processed_ids: Set[str] = set()
+        # Track processed comments (bounded to prevent unbounded memory growth)
+        self._processed_ids = deque(maxlen=10000)
+        self._processed_set: set = set()
         self.last_reply_time = 0
         self.max_depth = max_depth
 
-        logging.info(f"Bot initialized for r/{subreddit_name}")
-        logging.info(f"Available users: {', '.join(self.available_users) or '(default)'}")
+        logger.info(f"Bot initialized for r/{subreddit_name}")
+        logger.info(f"Available users: {', '.join(self.available_users) or '(default)'}")
+
+    def _mark_processed(self, comment_id: str):
+        """Mark a comment as processed, evicting oldest if at capacity."""
+        if comment_id in self._processed_set:
+            return
+        if len(self._processed_ids) == self._processed_ids.maxlen:
+            evicted = self._processed_ids[0]
+            self._processed_set.discard(evicted)
+        self._processed_ids.append(comment_id)
+        self._processed_set.add(comment_id)
+
+    def _is_processed(self, comment_id: str) -> bool:
+        return comment_id in self._processed_set
 
     def _init_reddit_api(self) -> praw.Reddit:
         """Initialize PRAW Reddit API client"""
+
+        required_vars = [
+            "REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET",
+            "REDDIT_USER_AGENT", "REDDIT_USERNAME", "REDDIT_PASSWORD",
+        ]
+        missing = [v for v in required_vars if not os.getenv(v)]
+        if missing:
+            raise EnvironmentError(
+                f"Missing required environment variables: {', '.join(missing)}. "
+                "Add them to your .env file."
+            )
 
         reddit = praw.Reddit(
             client_id=os.getenv("REDDIT_CLIENT_ID"),
@@ -114,7 +129,7 @@ class RedditBot:
             password=os.getenv("REDDIT_PASSWORD"),
         )
 
-        logging.info(f"Logged in as: {reddit.user.me()}")
+        logger.info(f"Logged in as: {reddit.user.me()}")
         return reddit
 
     def should_respond(self, comment) -> bool:
@@ -129,7 +144,7 @@ class RedditBot:
             return False
 
         # Skip already processed
-        if comment.id in self.processed_ids:
+        if self._is_processed(comment.id):
             return False
 
         # Check score threshold
@@ -178,7 +193,7 @@ class RedditBot:
                     context_parts.insert(0, f"Post: {parent.title}\n{parent.selftext[:500]}")
                     break
             except Exception as e:
-                logging.warning(f"Error getting parent: {e}")
+                logger.warning(f"Error getting parent: {e}")
                 break
 
         # Add the comment we're responding to
@@ -192,23 +207,16 @@ class RedditBot:
         Select which user to respond as based on context.
 
         Returns:
-            Username to impersonate. Falls back to first available user
-            or "anonimo" if none configured.
+            Username to impersonate. Falls back to DEFAULT_USERNAME if
+            no users are configured or the selector returns None.
         """
-
-        if self.user_classifier and self.available_users:
-            predicted = self.user_classifier.predict_user(context, threshold=0.1)
-            if predicted in self.available_users:
-                logging.info(f"Auto-selected user: {predicted}")
-                return predicted
-
-        # Fallback: random selection from available users
         if self.available_users:
-            selected = random.choice(self.available_users)
-            logging.info(f"Randomly selected user: {selected}")
-            return selected
+            selected = self.user_selector.select_user(context, self.available_users)
+            if selected:
+                logger.info(f"Selected user: {selected}")
+                return selected
 
-        return "anonimo"
+        return DEFAULT_USERNAME
 
     def generate_and_post_reply(self, comment):
         """Generate response and post it"""
@@ -216,22 +224,22 @@ class RedditBot:
         try:
             # Get context
             context = self.get_comment_context(comment)
-            logging.info(f"\nContext:\n{context}\n")
+            logger.info(f"\nContext:\n{context}\n")
 
             # Select user
             username = self.select_user_for_context(context)
-            logging.info(f"Responding as: {username}")
+            logger.info(f"Responding as: {username}")
 
             # Generate response
             response = self.bot_inference.generate_response(
                 context,
                 username=username,
-                max_new_tokens=200,
-                temperature=0.8,
-                top_p=0.9,
+                max_new_tokens=self.inference_config.get("max_new_tokens", 256),
+                temperature=self.inference_config.get("temperature", 0.8),
+                top_p=self.inference_config.get("top_p", 0.9),
             )
 
-            logging.info(f"Generated response: {response}")
+            logger.info(f"Generated response: {response}")
 
             # Add disclaimer
             disclaimer = f"\n\n---\n^(I'm a bot mimicking {username}'s style. Beep boop! [bot])"
@@ -241,62 +249,57 @@ class RedditBot:
             comment.reply(full_response)
 
             # Update tracking
-            self.processed_ids.add(comment.id)
+            self._mark_processed(comment.id)
             self.last_reply_time = time.time()
 
-            logging.info(f"Posted reply to comment {comment.id}")
+            logger.info(f"Posted reply to comment {comment.id}")
 
         except Exception as e:
-            logging.error(f"Error posting reply: {e}")
+            logger.error(f"Error posting reply: {e}")
 
     def monitor_comments(self):
         """Monitor subreddit for new comments"""
 
-        logging.info("Starting comment monitoring...")
+        logger.info("Starting comment monitoring...")
 
         try:
             for comment in self.subreddit.stream.comments(skip_existing=True):
                 try:
                     if self.should_respond(comment):
-                        logging.info(f"\nProcessing comment {comment.id} by {comment.author}")
+                        logger.info(f"\nProcessing comment {comment.id} by {comment.author}")
                         self.generate_and_post_reply(comment)
                     else:
-                        # Mark as processed to avoid checking again
-                        self.processed_ids.add(comment.id)
-
-                        # Limit memory usage
-                        if len(self.processed_ids) > 10000:
-                            self.processed_ids = set(list(self.processed_ids)[-5000:])
+                        self._mark_processed(comment.id)
 
                 except Exception as e:
-                    logging.error(f"Error processing comment: {e}")
+                    logger.error(f"Error processing comment: {e}")
                     continue
 
         except KeyboardInterrupt:
-            logging.info("Bot stopped by user")
+            logger.info("Bot stopped by user")
         except Exception as e:
-            logging.error(f"Fatal error: {e}")
+            logger.error(f"Fatal error: {e}")
             raise
 
     def reply_to_mentions(self):
         """Monitor and reply to username mentions"""
 
-        logging.info("Monitoring mentions...")
+        logger.info("Monitoring mentions...")
 
         for mention in self.reddit.inbox.mentions(limit=25):
-            if mention.id not in self.processed_ids:
+            if not self._is_processed(mention.id):
                 try:
-                    logging.info(f"Processing mention from {mention.author}")
+                    logger.info(f"Processing mention from {mention.author}")
                     self.generate_and_post_reply(mention)
                 except Exception as e:
-                    logging.error(f"Error replying to mention: {e}")
+                    logger.error(f"Error replying to mention: {e}")
 
     def run(self, monitor_mentions: bool = True):
         """Run the bot"""
 
-        logging.info(f"Starting Reddit bot for r/{self.subreddit.display_name}")
-        logging.info(f"Trigger keywords: {self.trigger_keywords or 'None (all comments)'}")
-        logging.info(f"Reply probability: {self.reply_probability}")
+        logger.info(f"Starting Reddit bot for r/{self.subreddit.display_name}")
+        logger.info(f"Trigger keywords: {self.trigger_keywords or 'None (all comments)'}")
+        logger.info(f"Reply probability: {self.reply_probability}")
 
         # Check mentions first
         if monitor_mentions:
@@ -306,9 +309,18 @@ class RedditBot:
         self.monitor_comments()
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler('reddit_bot.log'),
+            logging.StreamHandler()
+        ]
+    )
+
     bot = RedditBot(
         model_path="models/reddit_bot_lora",
-        base_model="meta-llama/Llama-3.1-8B-Instruct",
+        base_model=DEFAULT_BASE_MODEL,
         subreddit_name="test",
         bot_username="litiGPT",
         trigger_keywords=None,
@@ -316,7 +328,6 @@ if __name__ == "__main__":
         min_score_threshold=1,
         cooldown_seconds=120,
         available_users=["alice", "bob", "charlie"],
-        user_classifier_path="models/user_classifier.pkl",
     )
 
     # bot.run()

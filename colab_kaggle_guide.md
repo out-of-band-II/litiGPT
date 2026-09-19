@@ -110,7 +110,6 @@ inference:
 bot:
   subreddit: "test"
   available_users: []
-  user_classifier_path: "models/user_classifier.pkl"
   trigger_keywords: []
   reply_probability: 0.2
   min_score_threshold: 1

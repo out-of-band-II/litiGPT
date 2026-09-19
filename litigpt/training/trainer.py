@@ -3,82 +3,59 @@ Module 3: Model Training
 Fine-tune model using QLoRA
 """
 
-import torch
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    BitsAndBytesConfig,
-)
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from trl import SFTTrainer, SFTConfig
-from datasets import load_dataset
+import logging
 import os
 
+import torch
+from peft import LoraConfig, get_peft_model
+from trl import SFTTrainer, SFTConfig
+from datasets import load_dataset
+
+from litigpt.model_utils import load_model_and_tokenizer as _load_model, DEFAULT_BASE_MODEL
+
+logger = logging.getLogger(__name__)
+
 class RedditModelTrainer:
-    def __init__(self, 
-                 model_name: str = "meta-llama/Llama-3.1-8B-Instruct",
+    def __init__(self,
+                 model_name: str = DEFAULT_BASE_MODEL,
                  output_dir: str = "models/reddit_bot"):
         self.model_name = model_name
         self.output_dir = output_dir
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        # BFloat16 requires Ampere (sm_80) or newer; Pascal/Turing must use fp16
-        self.use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
-        self.compute_dtype = torch.bfloat16 if self.use_bf16 else torch.float16
-        print(f"Compute dtype: {'bfloat16' if self.use_bf16 else 'float16'}")
-        
+
     def load_model_and_tokenizer(self):
         """Load model with 4-bit quantization for QLoRA"""
-        
-        # Quantization config
-        bnb_config = BitsAndBytesConfig(
+        model, tokenizer, compute_dtype = _load_model(
+            base_model=self.model_name,
             load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=self.compute_dtype,
-            bnb_4bit_use_double_quant=True,
+            for_training=True,
         )
-
-        # Load model
-        print(f"Loading model: {self.model_name}")
-        model = AutoModelForCausalLM.from_pretrained(
-            self.model_name,
-            quantization_config=bnb_config,
-            device_map="auto",
-            dtype=self.compute_dtype,  # non-quantized tensors (embeds, norms, LoRA) match compute dtype
-        )
-        
-        # Prepare for training
-        model = prepare_model_for_kbit_training(model)
-        
-        # Load tokenizer
-        tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        tokenizer.pad_token = tokenizer.eos_token
-        tokenizer.padding_side = "right"
-        
+        self.compute_dtype = compute_dtype
+        self.use_bf16 = compute_dtype == torch.bfloat16
         return model, tokenizer
     
-    def setup_lora(self, model):
+    def setup_lora(self, model, r: int = 16, lora_alpha: int = 32,
+                   lora_dropout: float = 0.05, target_modules: list = None):
         """Configure LoRA parameters"""
-        
+
+        if target_modules is None:
+            target_modules = [
+                "q_proj", "k_proj", "v_proj", "o_proj",
+                "gate_proj", "up_proj", "down_proj",
+            ]
+
         lora_config = LoraConfig(
-            r=16,  # LoRA rank
-            lora_alpha=32,  # LoRA alpha
-            target_modules=[
-                "q_proj",
-                "k_proj", 
-                "v_proj",
-                "o_proj",
-                "gate_proj",
-                "up_proj",
-                "down_proj",
-            ],
-            lora_dropout=0.05,
+            r=r,
+            lora_alpha=lora_alpha,
+            target_modules=target_modules,
+            lora_dropout=lora_dropout,
             bias="none",
             task_type="CAUSAL_LM",
         )
-        
+
         model = get_peft_model(model, lora_config)
         model.print_trainable_parameters()
-        
+
         return model
     
     def prepare_dataset(self, data_dir: str = "data/training"):
@@ -93,8 +70,8 @@ class RedditModelTrainer:
             }
         )
         
-        print(f"Train samples: {len(dataset['train'])}")
-        print(f"Validation samples: {len(dataset['validation'])}")
+        logger.info("Train samples: %d", len(dataset['train']))
+        logger.info("Validation samples: %d", len(dataset['validation']))
         
         return dataset
     
@@ -119,14 +96,22 @@ class RedditModelTrainer:
               batch_size: int = 4,
               learning_rate: float = 2e-4,
               max_seq_length: int = 512,
+              gradient_accumulation_steps: int = 4,
+              lora_r: int = 16,
+              lora_alpha: int = 32,
+              lora_dropout: float = 0.05,
+              lora_target_modules: list = None,
               report_to: str = "none"):
         """Train the model"""
-        
+
         # Load model and tokenizer
         model, tokenizer = self.load_model_and_tokenizer()
-        
+
         # Setup LoRA
-        model = self.setup_lora(model)
+        model = self.setup_lora(
+            model, r=lora_r, lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout, target_modules=lora_target_modules,
+        )
         
         # Prepare dataset
         dataset = self.prepare_dataset(data_dir)
@@ -144,7 +129,7 @@ class RedditModelTrainer:
             num_train_epochs=num_epochs,
             per_device_train_batch_size=batch_size,
             per_device_eval_batch_size=batch_size,
-            gradient_accumulation_steps=4,
+            gradient_accumulation_steps=gradient_accumulation_steps,
             gradient_checkpointing=True,
             optim="paged_adamw_32bit",
             learning_rate=learning_rate,
@@ -175,11 +160,11 @@ class RedditModelTrainer:
         )
         
         # Train
-        print("Starting training...")
+        logger.info("Starting training...")
         trainer.train()
-        
+
         # Save final model
-        print(f"Saving model to {self.output_dir}")
+        logger.info("Saving model to %s", self.output_dir)
         trainer.save_model(self.output_dir)
         tokenizer.save_pretrained(self.output_dir)
         
@@ -187,31 +172,32 @@ class RedditModelTrainer:
     
     def merge_and_save_full_model(self, adapter_path: str = None):
         """Merge LoRA adapters with base model and save"""
-        
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from peft import PeftModel
+
         if adapter_path is None:
             adapter_path = self.output_dir
-        
-        print("Loading base model...")
+
+        logger.info("Loading base model...")
         model = AutoModelForCausalLM.from_pretrained(
             self.model_name,
             torch_dtype=torch.float16,
             device_map="auto"
         )
-        
-        print("Loading LoRA adapters...")
-        from peft import PeftModel
+
+        logger.info("Loading LoRA adapters...")
         model = PeftModel.from_pretrained(model, adapter_path)
-        
-        print("Merging...")
+
+        logger.info("Merging...")
         model = model.merge_and_unload()
-        
+
         output_path = f"{self.output_dir}_merged"
-        print(f"Saving merged model to {output_path}")
+        logger.info("Saving merged model to %s", output_path)
         model.save_pretrained(output_path)
-        
+
         tokenizer = AutoTokenizer.from_pretrained(adapter_path)
         tokenizer.save_pretrained(output_path)
-        
+
         return output_path
 
 if __name__ == "__main__":
@@ -259,7 +245,7 @@ if __name__ == "__main__":
     # End run
     tracker.end_run()
 
-    print(f"\nView results at: {tracker.tracking_uri}")
+    logger.info("View results at: %s", tracker.tracking_uri)
 
     # Optional: merge LoRA adapters into the base model weights to produce a
     # single standalone model (no adapter files). Useful for Ollama/vLLM
