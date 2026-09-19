@@ -1,0 +1,65 @@
+# Smoke-test config — deliberately tiny.
+#
+# Exercises every stage of the pipeline end to end in a few minutes so that
+# breakage surfaces locally instead of on a paid GPU. Not for real training:
+# 3 users x 200 pairs teaches the model nothing useful.
+
+data:
+  raw_dir: "data/raw"
+  submission_filename: "litigi_submissions.parquet"
+  comments_filename: "litigi_comments.parquet"
+  processed_dir: "data/smoke/processed"
+  training_dir: "data/smoke/training"
+
+  target_usernames: []
+  top_n_users: 3
+  max_pairs_per_user: 200
+  exclude_authors: ["[deleted]", "[removed]", "AutoModerator"]
+  strip_quoted_text: true
+
+  min_comment_length: 10
+  max_comment_length: 512
+  min_score: 1
+
+model:
+  # 135M params with a real chat template: small enough to download and train
+  # in minutes, real enough to exercise the actual code path.
+  base_model: "HuggingFaceTB/SmolLM2-135M-Instruct"
+  output_dir: "models/smoke_lora"
+
+training:
+  num_epochs: 1
+  batch_size: 2
+  gradient_accumulation_steps: 1
+  learning_rate: 2.0e-4
+  max_seq_length: 256
+  warmup_ratio: 0.05
+  train_ratio: 0.9
+  group_by_length: true
+
+lora:
+  r: 8
+  lora_alpha: 16
+  lora_dropout: 0.05
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
+
+inference:
+  max_new_tokens: 64
+  temperature: 0.8
+  top_p: 0.9
+  top_k: 50
+  repetition_penalty: 1.1
+
+user_classification:
+  strategy: "random"
+  user_keywords: {}
+
+bot:
+  subreddit: "test"
+  available_users: []
+  trigger_keywords: []
+  reply_probability: 0.2
+  min_score_threshold: 1
+  cooldown_seconds: 120
+  max_context_depth: 3
+  bot_username: "litiGPT"

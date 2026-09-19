@@ -6,7 +6,7 @@ import json
 import logging
 import polars as pl
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 from argparse import ArgumentParser
 
 logger = logging.getLogger(__name__)
@@ -26,55 +26,118 @@ class RedditDataExtractor:
         else:
             raise ValueError(f"Unsupported format: {filepath.suffix}")
 
+    def select_top_users(self,
+                         comments: pl.DataFrame,
+                         n: int,
+                         exclude: Optional[List[str]] = None,
+                         min_comments: int = 100) -> List[str]:
+        """
+        Pick the N most prolific authors, skipping bots and deleted accounts.
+
+        Args:
+            comments: Full comments DataFrame.
+            n: How many authors to return.
+            exclude: Authors to skip entirely (bots, [deleted], ...).
+            min_comments: Floor below which an author has too little data to
+                learn a style from.
+        """
+        exclude = exclude or []
+        counts = (
+            comments
+            .filter(~pl.col("author").is_in(exclude))
+            .group_by("author")
+            .agg(pl.len().alias("n"))
+            .filter(pl.col("n") >= min_comments)
+            .sort("n", descending=True)
+            .head(n)
+        )
+        users = counts["author"].to_list()
+        if len(users) < n:
+            logger.warning(
+                "Only %d authors clear the %d-comment floor (asked for %d)",
+                len(users), min_comments, n,
+            )
+        for row in counts.iter_rows(named=True):
+            logger.info("  %-28s %7d comments", row["author"], row["n"])
+        return users
+
     def extract_user_data(self,
                          username: str,
                          comments_file: str = "comments.jsonl",
-                         posts_file: str = "submissions.jsonl") -> pl.DataFrame:
-        """Extract user data (comments + posts)"""
-        logger.info(f"Loading comments from {comments_file}...")
-        comments = self.load_data(comments_file)
+                         posts_file: str = "submissions.jsonl",
+                         comments: Optional[pl.DataFrame] = None,
+                         posts: Optional[pl.DataFrame] = None) -> pl.DataFrame:
+        """
+        Extract one user's comments and posts.
 
-        # Filter by user
-        user_comments = comments.filter(pl.col('author') == username)
-        user_comments = user_comments.with_columns(pl.lit('comment').alias('type'))
+        Pass `comments`/`posts` to reuse an already-loaded corpus — extracting a
+        cohort otherwise re-reads the whole dump once per user.
+        """
+        if comments is None:
+            logger.info("Loading comments from %s...", comments_file)
+            comments = self.load_data(comments_file)
+        if posts is None:
+            logger.info("Loading posts from %s...", posts_file)
+            posts = self.load_data(posts_file)
 
-        logger.info(f"Loading posts from {posts_file}...")
-        posts = self.load_data(posts_file)
+        user_comments = (comments.filter(pl.col('author') == username)
+                                 .with_columns(pl.lit('comment').alias('type')))
+        user_posts = (posts.filter(pl.col('author') == username)
+                           .with_columns(pl.lit('post').alias('type')))
 
-        user_posts = posts.filter(pl.col('author') == username)
-        user_posts = user_posts.with_columns(pl.lit('post').alias('type'))
-
-        # Combine (diagonal to handle different columns)
-        user_data = pl.concat([
-            user_comments,
-            user_posts
-        ], how='diagonal')
-
-        logger.info(f"Extracted {len(user_comments)} comments and {len(user_posts)} posts for {username}")
+        user_data = pl.concat([user_comments, user_posts], how='diagonal')
+        logger.info("Extracted %d comments and %d posts for %s",
+                    len(user_comments), len(user_posts), username)
         return user_data
 
     def extract_multiple_users(self,
-                               usernames: List[str],
+                               usernames: Optional[List[str]] = None,
                                comments_file: str = "comments.jsonl",
                                posts_file: str = "submissions.jsonl",
-                               min_comments_per_user: int = 100) -> Dict[str, pl.DataFrame]:
-        """Extract data for multiple users"""
+                               min_comments_per_user: int = 100,
+                               top_n: int = 0,
+                               exclude_authors: Optional[List[str]] = None) -> Dict[str, pl.DataFrame]:
+        """
+        Extract data for a cohort of users.
+
+        The corpus is loaded once and filtered per user. Give `usernames` for an
+        explicit cohort, or `top_n` to select the most prolific authors
+        automatically.
+        """
+        logger.info("Loading comments from %s...", comments_file)
+        comments = self.load_data(comments_file)
+        logger.info("Loading posts from %s...", posts_file)
+        posts = self.load_data(posts_file)
+
+        if not usernames:
+            if top_n <= 0:
+                raise ValueError("Provide either `usernames` or a positive `top_n`.")
+            logger.info("Selecting top %d authors by comment count:", top_n)
+            usernames = self.select_top_users(
+                comments, n=top_n, exclude=exclude_authors,
+                min_comments=min_comments_per_user,
+            )
+
         users_data = {}
-
+        skipped = []
         for username in usernames:
-            logger.info(f"{'='*60}")
-            logger.info(f"Processing user: {username}")
-            logger.info('='*60)
-
-            user_data = self.extract_user_data(username, comments_file, posts_file)
-
+            user_data = self.extract_user_data(
+                username, comments=comments, posts=posts,
+            )
+            n_comments = len(user_data.filter(pl.col('type') == 'comment'))
+            if n_comments < min_comments_per_user:
+                logger.warning("Skipping %s: %d comments < %d minimum",
+                               username, n_comments, min_comments_per_user)
+                skipped.append(username)
+                continue
             users_data[username] = user_data
-            logger.info(f"Added {username} with {len(user_data)} items")
 
-        logger.info(f"{'='*60}")
-        logger.info(f"Total users extracted: {len(users_data)}")
-        logger.info('='*60)
-
+        logger.info("=" * 60)
+        logger.info("Extracted %d users (%d skipped for too little data)",
+                    len(users_data), len(skipped))
+        if skipped:
+            logger.info("Skipped: %s", ", ".join(skipped))
+        logger.info("=" * 60)
         return users_data
 
     def save_processed_data(self, data: pl.DataFrame, output_path: str):

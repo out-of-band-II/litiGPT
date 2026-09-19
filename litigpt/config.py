@@ -21,6 +21,17 @@ class DataConfig(BaseModel):
     processed_dir: str = "data/processed"
     training_dir: str = "data/training"
     target_usernames: List[str] = []
+    # Leave target_usernames empty and set top_n_users to pick the N most
+    # prolific authors automatically. An explicit target_usernames wins.
+    top_n_users: int = 0
+    # Cap pairs per user so one prolific author can't dominate the mix.
+    # 0 disables the cap.
+    max_pairs_per_user: int = 0
+    # Never treat these as trainable personas.
+    exclude_authors: List[str] = ["[deleted]", "[removed]", "AutoModerator"]
+    # Drop the quoted parent text ("> ...") from a user's own reply. The parent
+    # is already supplied as context, so keeping it teaches the model to copy.
+    strip_quoted_text: bool = True
     min_comment_length: int = 10
     max_comment_length: int = 512
     min_score: int = 1

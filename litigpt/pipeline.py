@@ -31,16 +31,23 @@ class PipelineRunner:
         data = self.config.data
         extractor = RedditDataExtractor(data.raw_dir)
 
+        if data.target_usernames:
+            logger.info("Cohort: %d users from config", len(data.target_usernames))
+        else:
+            logger.info("Cohort: top %d users by comment count", data.top_n_users)
+
         users_data = extractor.extract_multiple_users(
             usernames=data.target_usernames,
             comments_file=data.comments_filename,
             posts_file=data.submission_filename,
+            top_n=data.top_n_users,
+            exclude_authors=data.exclude_authors,
         )
 
         extractor.save_multi_user_data(users_data, data.processed_dir)
 
         total = sum(len(d) for d in users_data.values())
-        logger.info("Extracted %d items for %s", total, data.target_usernames)
+        logger.info("Extracted %d items for %d users", total, len(users_data))
         return users_data
 
     def run_preprocessing(self):
@@ -50,17 +57,26 @@ class PipelineRunner:
         logger.info("-" * 60)
 
         import polars as pl
+        from litigpt.model_utils import load_user_metadata
 
         data = self.config.data
         preprocessor = RedditDataPreprocessor(
             min_length=data.min_comment_length,
             max_length=data.max_comment_length,
+            min_score=data.min_score,
+            strip_quoted_text=data.strip_quoted_text,
         )
 
-        # Load per-user parquet files saved by run_data_extraction,
-        # filtered to only the users specified in config
+        # The cohort is whatever extraction actually wrote. With top_n selection
+        # target_usernames is empty, so fall back to the metadata it saved.
         processed_dir = Path(data.processed_dir)
-        target_users = set(data.target_usernames)
+        target_users = set(data.target_usernames) or set(load_user_metadata(str(processed_dir)))
+        if not target_users:
+            raise FileNotFoundError(
+                f"No cohort found. Set data.target_usernames or data.top_n_users "
+                f"and run extraction first (looked in {processed_dir})."
+            )
+
         users_data = {
             p.stem.replace("_data", ""): pl.read_parquet(p)
             for p in sorted(processed_dir.glob("*_data.parquet"))
@@ -68,12 +84,12 @@ class PipelineRunner:
         }
         if not users_data:
             raise FileNotFoundError(
-                f"No *_data.parquet files found in {processed_dir} for configured users "
-                f"{data.target_usernames}. Run extraction first."
+                f"No *_data.parquet files found in {processed_dir} for cohort "
+                f"{sorted(target_users)}. Run extraction first."
             )
         missing = target_users - set(users_data.keys())
         if missing:
-            logger.warning("No parquet files found for configured users: %s", missing)
+            logger.warning("No parquet files found for: %s", sorted(missing))
 
         # Load all comments and build conversation threads for context
         extractor = RedditDataExtractor(data.raw_dir)
@@ -84,10 +100,13 @@ class PipelineRunner:
         users_data = {u: preprocessor.filter_quality(d) for u, d in users_data.items()}
 
         # Create training pairs for all users
-        pairs = preprocessor.create_multi_user_training_pairs(users_data, thread_data)
+        pairs = preprocessor.create_multi_user_training_pairs(
+            users_data, thread_data,
+            max_pairs_per_user=data.max_pairs_per_user,
+        )
 
         if len(pairs) < 100:
-            logger.warning("Only %d training pairs. Consider using a user with more comments.", len(pairs))
+            logger.warning("Only %d training pairs. Consider a larger cohort.", len(pairs))
 
         # Format for training
         formatted = preprocessor.format_for_training(pairs, format_type="chatml")
@@ -400,8 +419,22 @@ def main():
         default='config.yaml',
         help='Path to configuration file'
     )
+    parser.add_argument(
+        '--log-level',
+        default='INFO',
+        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+        help='Logging verbosity (default: INFO)'
+    )
 
     args = parser.parse_args()
+
+    # Every stage reports through logging; without this the pipeline runs
+    # silently, which is unbearable on a multi-hour GPU job.
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format='%(asctime)s %(levelname)-7s %(name)s: %(message)s',
+        datefmt='%H:%M:%S',
+    )
 
     # Initialize pipeline
     pipeline = PipelineRunner(args.config)

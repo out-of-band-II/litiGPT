@@ -1,0 +1,78 @@
+# litiGPT — top-30 multi-user cohort.
+#
+# target_usernames is deliberately empty: the cohort is selected automatically
+# as the 30 most prolific authors, so it stays reproducible from the raw dump
+# without pinning 30 names here.
+#
+#   python -m litigpt.pipeline --step extract    --config config.top30.yaml
+#   python -m litigpt.pipeline --step preprocess --config config.top30.yaml
+#   python -m litigpt.pipeline --step train      --config config.top30.yaml
+
+data:
+  raw_dir: "data/raw"
+  submission_filename: "litigi_submissions.parquet"
+  comments_filename: "litigi_comments.parquet"
+  processed_dir: "data/processed"
+  training_dir: "data/training"
+
+  target_usernames: []      # empty -> use top_n_users
+  top_n_users: 30
+  # #1 has ~12,700 usable pairs and #30 ~2,100. Capping at 2,000 keeps the mix
+  # balanced; without it the model over-indexes on the loudest few.
+  max_pairs_per_user: 2000
+  exclude_authors: ["[deleted]", "[removed]", "AutoModerator"]
+  strip_quoted_text: true
+
+  min_comment_length: 10
+  max_comment_length: 512
+  min_score: 1
+
+model:
+  base_model: "microsoft/phi-3-mini-4k-instruct"
+  output_dir: "models/litigpt_top30_lora"
+
+training:
+  num_epochs: 3
+  batch_size: 8
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-4
+  max_seq_length: 512
+  warmup_ratio: 0.05
+  train_ratio: 0.9
+  group_by_length: true
+
+lora:
+  # 30 personas is a lot to separate; r=32 gives the adapter more capacity than
+  # the r=16 that was tuned for a single user.
+  r: 32
+  lora_alpha: 64
+  lora_dropout: 0.05
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+
+inference:
+  max_new_tokens: 256
+  temperature: 0.8
+  top_p: 0.9
+  top_k: 50
+  repetition_penalty: 1.1
+
+user_classification:
+  strategy: "random"
+  user_keywords: {}
+
+bot:
+  subreddit: "test"
+  available_users: []
+  trigger_keywords: []
+  reply_probability: 0.2
+  min_score_threshold: 1
+  cooldown_seconds: 120
+  max_context_depth: 3
+  bot_username: "litiGPT"
