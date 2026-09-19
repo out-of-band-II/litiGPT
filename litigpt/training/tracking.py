@@ -7,7 +7,6 @@ import logging
 
 import mlflow
 import mlflow.pytorch
-from pathlib import Path
 from typing import Dict, Any
 import pandas as pd
 from datetime import datetime

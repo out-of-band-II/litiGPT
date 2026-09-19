@@ -8,7 +8,6 @@ import logging
 from flask import Flask, render_template, request, jsonify, Response
 from pathlib import Path
 import json
-import torch
 from typing import List, Dict, Optional
 from litigpt.config import Config
 from litigpt.prompts import build_system_prompt

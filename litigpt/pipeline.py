@@ -6,7 +6,6 @@ Orchestrate the entire pipeline from data to deployment
 import argparse
 import logging
 from pathlib import Path
-import sys
 
 from litigpt.config import Config
 from litigpt.data.extraction import RedditDataExtractor
@@ -17,6 +16,7 @@ logger = logging.getLogger(__name__)
 class PipelineRunner:
     def __init__(self, config_path: str = "config.yaml"):
         """Initialize pipeline with configuration"""
+        self.config_path = config_path
         self.config = Config.from_yaml(config_path)
         logger.info("=" * 60)
         logger.info("Reddit Chatbot Pipeline")
@@ -141,9 +141,9 @@ class PipelineRunner:
             # Log full config as params
             tracker.log_config(self.config.model_dump())
 
-            # Log config.yaml as artifact for exact reproducibility
-            if Path("config.yaml").exists():
-                mlflow.log_artifact("config.yaml")
+            # Log the active config file as an artifact for exact reproducibility
+            if Path(self.config_path).exists():
+                mlflow.log_artifact(self.config_path)
 
             # Log dataset sizes and data quality metrics
             train_path = Path(data_cfg.training_dir) / "train.jsonl"
@@ -210,6 +210,7 @@ class PipelineRunner:
                 learning_rate=training_cfg.learning_rate,
                 max_seq_length=training_cfg.max_seq_length,
                 gradient_accumulation_steps=training_cfg.gradient_accumulation_steps,
+                warmup_ratio=training_cfg.warmup_ratio,
                 lora_r=lora_cfg.r,
                 lora_alpha=lora_cfg.lora_alpha,
                 lora_dropout=lora_cfg.lora_dropout,

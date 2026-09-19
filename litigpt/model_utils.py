@@ -65,7 +65,7 @@ def load_model_and_tokenizer(
         base_model,
         quantization_config=bnb_config,
         device_map="auto",
-        torch_dtype=compute_dtype,
+        dtype=compute_dtype,
         trust_remote_code=True,
     )
 

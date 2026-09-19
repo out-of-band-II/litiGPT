@@ -46,14 +46,15 @@ echo "  python -m litigpt.training.trainer"
 # deploy_aws.py - Deploy bot to AWS ECS
 # =============================================================================
 
-import boto3
 import json
-from typing import Dict
 
 class AWSDeployer:
     """Deploy Reddit bot to AWS ECS"""
     
     def __init__(self, region: str = "us-east-1"):
+        # boto3 is an optional extra; import lazily so this module stays
+        # importable without the AWS dependencies installed.
+        import boto3
         self.ecs = boto3.client('ecs', region_name=region)
         self.ecr = boto3.client('ecr', region_name=region)
         self.logs = boto3.client('logs', region_name=region)

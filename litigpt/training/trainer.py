@@ -97,6 +97,7 @@ class RedditModelTrainer:
               learning_rate: float = 2e-4,
               max_seq_length: int = 512,
               gradient_accumulation_steps: int = 4,
+              warmup_ratio: float = 0.05,
               lora_r: int = 16,
               lora_alpha: int = 32,
               lora_dropout: float = 0.05,
@@ -123,9 +124,9 @@ class RedditModelTrainer:
         )
         
         # Training arguments (SFTConfig = TrainingArguments + SFT-specific params)
-        os.environ["TENSORBOARD_LOGGING_DIR"] = os.path.join(self.output_dir, "logs")
         training_args = SFTConfig(
             output_dir=self.output_dir,
+            logging_dir=os.path.join(self.output_dir, "logs"),
             num_train_epochs=num_epochs,
             per_device_train_batch_size=batch_size,
             per_device_eval_batch_size=batch_size,
@@ -134,7 +135,7 @@ class RedditModelTrainer:
             optim="paged_adamw_32bit",
             learning_rate=learning_rate,
             lr_scheduler_type="cosine",
-            warmup_steps=10,
+            warmup_ratio=warmup_ratio,
             logging_steps=10,
             eval_strategy="steps",
             eval_steps=50,
@@ -181,7 +182,7 @@ class RedditModelTrainer:
         logger.info("Loading base model...")
         model = AutoModelForCausalLM.from_pretrained(
             self.model_name,
-            torch_dtype=torch.float16,
+            dtype=torch.float16,
             device_map="auto"
         )
 
