@@ -69,13 +69,15 @@ class RedditDataPreprocessor:
         text = self._unescape_fully(text)
         text = self._ZERO_WIDTH.sub('', text)
 
-        # 2. Drop quoted parent text, while line boundaries still exist.
-        if self.strip_quoted_text:
-            text = self._QUOTE_LINE.sub("", text)
-
-        # 3. Links: keep the anchor text, drop the URL.
+        # 2. Links: keep the anchor text, drop the URL. This runs before the
+        #    quote strip because an anchor can hold a quote marker itself --
+        #    "[&gt; quoted](url)" only reveals its ">" once unwrapped.
         text = self._MD_LINK.sub(r"\1", text)
         text = self._BARE_URL.sub("", text)
+
+        # 3. Drop quoted parent text, while line boundaries still exist.
+        if self.strip_quoted_text:
+            text = self._QUOTE_LINE.sub("", text)
 
         # 4. Normalise whitespace but keep paragraph breaks, which carry some of
         #    the rhythm of how someone writes.
