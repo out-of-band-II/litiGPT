@@ -211,6 +211,7 @@ class PipelineRunner:
                 max_seq_length=training_cfg.max_seq_length,
                 gradient_accumulation_steps=training_cfg.gradient_accumulation_steps,
                 warmup_ratio=training_cfg.warmup_ratio,
+                group_by_length=training_cfg.group_by_length,
                 lora_r=lora_cfg.r,
                 lora_alpha=lora_cfg.lora_alpha,
                 lora_dropout=lora_cfg.lora_dropout,

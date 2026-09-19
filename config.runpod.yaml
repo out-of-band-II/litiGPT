@@ -37,6 +37,9 @@ training:
   max_seq_length: 512
   warmup_ratio: 0.05
   train_ratio: 0.9
+  # Sequence lengths here are very uneven (median 164 tok, p95 502).
+  # Grouping by length cuts padding waste from ~103% to near zero.
+  group_by_length: true
 
 lora:
   r: 16
