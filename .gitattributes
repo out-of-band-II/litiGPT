@@ -1,0 +1,16 @@
+# Normalize to LF in the repository.
+* text=auto eol=lf
+
+# Files executed on Linux must never be checked out with CRLF — a shell script
+# with CR line endings fails on the pod as "bad interpreter: /bin/bash^M".
+*.sh        text eol=lf
+Dockerfile* text eol=lf
+*.yaml      text eol=lf
+*.yml       text eol=lf
+
+# Binary / generated
+*.parquet   binary
+*.zst       binary
+*.pkl       binary
+*.ipynb     -text
+uv.lock     text eol=lf -diff
