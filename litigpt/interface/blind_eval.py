@@ -628,8 +628,15 @@ class BlindEvalInterface:
 
     def create_interface(self):
         import gradio as gr
+        import torch
 
         max_choices = min(8, len(self.available_users))
+
+        # Generating on CPU runs at a couple of tokens a second, so a 256-token
+        # default would mean minutes per reply. Short replies are also closer to
+        # what the training data looks like, so this costs little.
+        on_cpu = self.source == "model" and not torch.cuda.is_available()
+        default_max_tokens = 96 if on_cpu else 256
 
         with gr.Blocks(title="litiGPT — valutazione alla cieca") as demo:
             round_state = gr.State(value=None)
@@ -649,6 +656,12 @@ class BlindEvalInterface:
                     "Il modello impersona qualcuno del cohort, ma non ti dice chi. "
                     "Chatta quanto vuoi, poi indovina."
                 )
+                if on_cpu:
+                    banner += (
+                        "\n\n*Nessuna GPU rilevata: la generazione gira su CPU, "
+                        "circa 1-3 token al secondo. Ogni risposta richiede "
+                        "qualche decina di secondi.*"
+                    )
             gr.Markdown(banner)
 
             with gr.Row():
@@ -704,8 +717,12 @@ class BlindEvalInterface:
                     with gr.Accordion("Impostazioni", open=False):
                         temperature = gr.Slider(0.1, 1.5, value=0.8, step=0.05,
                                                 label="Temperature")
-                        max_tokens = gr.Slider(50, 512, value=256, step=25,
-                                               label="Token massimi")
+                        max_tokens = gr.Slider(
+                            50, 512, value=default_max_tokens, step=25,
+                            label="Token massimi",
+                            info=("Su CPU ogni token costa: tieni basso"
+                                  if on_cpu else "Lunghezza massima risposta"),
+                        )
                         human_handle = gr.Textbox(
                             value=DEFAULT_HUMAN_HANDLE, label="Il tuo handle",
                             info="Come appari nel thread passato al modello",
