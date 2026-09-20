@@ -40,6 +40,12 @@ training:
   warmup_ratio: 0.05
   train_ratio: 0.9
   group_by_length: true
+  # The val split is 5,988 examples = 749 batches per evaluation. At the
+  # default eval_steps of 50 that is ~100 evaluations, adding roughly two
+  # hours to the run. Ten evaluations is plenty to track convergence.
+  eval_steps: 500
+  save_steps: 500
+  logging_steps: 25
 
 lora:
   # 30 personas is a lot to separate; r=32 gives the adapter more capacity than

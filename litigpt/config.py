@@ -53,6 +53,13 @@ class TrainingConfig(BaseModel):
     # Batch similar-length sequences together. Padding waste on this dataset
     # is ~103% without it, which roughly doubles cloud GPU cost.
     group_by_length: bool = True
+    # Evaluation/checkpoint cadence. Defaults suit a small set; on a large
+    # val split a low eval_steps dominates runtime (5,988 val examples at
+    # batch 8 is 749 batches per evaluation).
+    eval_steps: int = 50
+    save_steps: int = 100
+    logging_steps: int = 10
+    save_total_limit: int = 3
 
 
 class LoraConfig(BaseModel):
