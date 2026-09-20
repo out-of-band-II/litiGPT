@@ -82,7 +82,7 @@ All source code lives in the `litigpt/` package, organized by function:
 
 3. **Inference** (`litigpt/inference/`):
    - `generator.py`: Generate responses (single-user and multi-user)
-   - `classifier.py`: Multi-user personality selection (TF-IDF, Keywords, Hybrid)
+   - `classifier.py`: Deploy-time persona selection (Random, Keywords)
 
 4. **Deployment** (`litigpt/deployment/`):
    - `reddit_bot.py`: Deploy to Reddit (monitors subreddit, auto-selects personality)
@@ -90,9 +90,14 @@ All source code lives in the `litigpt/` package, organized by function:
 
 5. **Interface** (`litigpt/interface/`):
    - `gradio_app.py`: Gradio chat UI
+   - `blind_eval.py`: Blind persona evaluation (guess who the model is impersonating)
    - `ollama.py`: Ollama-compatible API server
 
-6. **Config & Pipeline**:
+6. **Evaluation** (`litigpt/eval/`):
+   - `attribution.py`: Authorship attribution (TF-IDF + logistic regression);
+     scores persona separation and backs the blind evaluation
+
+7. **Config & Pipeline**:
    - `litigpt/config.py`: Pydantic configuration models (validated, typed)
    - `litigpt/pipeline.py`: Orchestrates entire workflow
 
@@ -166,7 +171,8 @@ reddit-chatbot/
 │   ├── training/               # Fine-tuning & MLflow tracking
 │   ├── inference/              # Generation & classification
 │   ├── deployment/             # Reddit bot & cloud deployment
-│   ├── interface/              # Gradio & Ollama chat UIs
+│   ├── interface/              # Gradio, blind eval & Ollama chat UIs
+│   ├── eval/                   # Authorship attribution & persona scoring
 │   ├── config.py               # Configuration setup
 │   └── pipeline.py             # Pipeline orchestrator
 ├── launch_chat.py              # Quick-launch script
@@ -353,6 +359,7 @@ MLFLOW_TRACKING_URI=...       # Optional: http://localhost:5000
 - `multi_user_guide.md`: Multi-user setup
 - `colab_kaggle_guide.md`: Colab/Kaggle guide
 - `cloud_training_guide.md`: RunPod GPU training
+- `blind_eval_guide.md`: Blind persona evaluation protocol
 
 ### For Developers
 - `ARCHITECTURE.md`: System diagrams

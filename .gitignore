@@ -488,3 +488,8 @@ config.colab.yaml
 data/smoke/
 models/smoke_lora/
 .venv-wsl/
+
+# Blind-evaluation logs: human judgements plus generated impersonations of
+# real, named users. Kept out of git like every other data/ artefact — back
+# these up yourself, they are the output of the evaluation.
+data/eval/

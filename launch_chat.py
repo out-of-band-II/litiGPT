@@ -56,6 +56,38 @@ def launch_gradio(model_path, base_model, config, share, port):
 
     subprocess.run(cmd)
 
+def launch_blind(model_path, base_model, config, share, port, host,
+                 oracle, classifier, seed):
+    """Launch the blind persona evaluation"""
+    cmd = [
+        sys.executable,
+        "-m", "litigpt.interface.blind_eval",
+        "--base-model", base_model,
+        "--config", config,
+        "--host", host,
+        "--port", str(port),
+    ]
+
+    if model_path:
+        cmd += ["--model", model_path]
+    if oracle:
+        cmd.append("--oracle")
+    if classifier:
+        cmd.append("--classifier")
+    if seed is not None:
+        cmd += ["--seed", str(seed)]
+    if share:
+        cmd.append("--share")
+
+    print("\n" + "="*60)
+    print("Launching Blind Persona Evaluation...")
+    print("="*60)
+    print(f"Source: {'real held-out comments (ceiling)' if oracle else model_path}")
+    print(f"Port: {port}")
+    print("="*60 + "\n")
+
+    subprocess.run(cmd)
+
 def launch_ollama(model_path, base_model, config, host, port):
     """Launch Ollama-style interface"""
     cmd = [
@@ -86,6 +118,12 @@ Examples:
   # Launch Gradio (default)
   python launch_chat.py --model models/reddit_bot_lora
 
+  # Blind evaluation: guess which persona the model is impersonating
+  python launch_chat.py --interface blind --model models/litigpt_top30_lora
+
+  # Ceiling run first — real comments, no GPU needed, no adapter needed
+  python launch_chat.py --interface blind --oracle
+
   # Launch Ollama-style
   python launch_chat.py --interface ollama --model models/reddit_bot_lora
 
@@ -99,15 +137,15 @@ Examples:
 
     parser.add_argument(
         "--interface",
-        choices=["gradio", "ollama"],
+        choices=["gradio", "ollama", "blind"],
         default="gradio",
         help="Interface type (default: gradio)"
     )
 
     parser.add_argument(
         "--model",
-        required=True,
-        help="Path to fine-tuned model directory"
+        help="Path to fine-tuned model directory "
+             "(optional only for --interface blind --oracle)"
     )
 
     parser.add_argument(
@@ -126,27 +164,54 @@ Examples:
     parser.add_argument(
         "--share",
         action="store_true",
-        help="Create public share link (Gradio only)"
+        help="Create public share link (Gradio and blind eval)"
+    )
+
+    # Blind-evaluation options
+    parser.add_argument(
+        "--oracle",
+        action="store_true",
+        help="Blind eval only: answer with the persona's real held-out "
+             "comments instead of generating. Establishes the ceiling your "
+             "model scores should be read against; needs no GPU or adapter."
+    )
+
+    parser.add_argument(
+        "--classifier",
+        action="store_true",
+        help="Blind eval only: have the TF-IDF attributor guess each round too"
+    )
+
+    parser.add_argument(
+        "--seed",
+        type=int,
+        help="Blind eval only: seed the persona draw for a reproducible session"
     )
 
     # Ollama-specific options
     parser.add_argument(
         "--host",
         default="127.0.0.1",
-        help="Server host (Ollama only, default: 127.0.0.1)"
+        help="Server host (Ollama and blind eval, default: 127.0.0.1)"
     )
 
     # Common options
     parser.add_argument(
         "--port",
         type=int,
-        help="Server port (default: 7860 for Gradio, 5000 for Ollama)"
+        help="Server port (default: 7860 Gradio, 7861 blind eval, 5000 Ollama)"
     )
 
     args = parser.parse_args()
 
-    # Check if model exists
-    if not Path(args.model).exists():
+    # The oracle condition replays real comments, so it needs neither an
+    # adapter nor a GPU — it is the one mode that can run before training ends.
+    needs_model = not (args.interface == "blind" and args.oracle)
+
+    if needs_model and not args.model:
+        parser.error("--model is required (except with --interface blind --oracle)")
+
+    if needs_model and not Path(args.model).exists():
         print(f"Error: Model not found at {args.model}")
         print("\nMake sure you've trained a model first:")
         print("  python -m litigpt.pipeline --step train")
@@ -158,10 +223,22 @@ Examples:
 
     # Set default port if not specified
     if args.port is None:
-        args.port = 7860 if args.interface == "gradio" else 5000
+        args.port = {"gradio": 7860, "blind": 7861}.get(args.interface, 5000)
 
     # Launch appropriate interface
-    if args.interface == "gradio":
+    if args.interface == "blind":
+        launch_blind(
+            args.model,
+            args.base_model,
+            args.config,
+            args.share,
+            args.port,
+            args.host,
+            args.oracle,
+            args.classifier,
+            args.seed,
+        )
+    elif args.interface == "gradio":
         launch_gradio(
             args.model,
             args.base_model,
