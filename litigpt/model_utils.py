@@ -36,6 +36,71 @@ def _detect_compute_dtype() -> Tuple[torch.dtype, bool]:
     return compute_dtype, use_bf16
 
 
+def _estimate_weight_bytes(base_model: str) -> Optional[int]:
+    """
+    Size of a model's weight files, if it is already in the HuggingFace cache.
+
+    Returns None when the size cannot be known — a local path, a model not yet
+    downloaded, or no hub cache. Callers treat None as "cannot check".
+    """
+    try:
+        from huggingface_hub import scan_cache_dir
+        cache = scan_cache_dir()
+    except Exception:
+        return None
+
+    for repo in cache.repos:
+        if repo.repo_id != base_model:
+            continue
+        sizes = [
+            sum(f.size_on_disk for f in rev.files
+                if f.file_name.endswith((".safetensors", ".bin")))
+            for rev in repo.revisions
+        ]
+        largest = max(sizes, default=0)
+        return largest or None
+    return None
+
+
+def _check_cpu_headroom(base_model: str) -> None:
+    """
+    Refuse a CPU load that cannot fit in RAM, before spending minutes on it.
+
+    Without this the load appears to succeed: accelerate quietly offloads the
+    overflow to disk, those parameters stay on the meta device, and any LoRA
+    weights written to them are discarded as a no-op. The result is a model
+    that runs and answers with the adapter missing from much of the network,
+    which is far worse than a refusal.
+    """
+    needed = _estimate_weight_bytes(base_model)
+    if needed is None:
+        return
+
+    try:
+        import psutil
+        available = psutil.virtual_memory().available
+    except Exception:
+        return
+
+    gb = 1024 ** 3
+    # Weights plus room for activations, KV cache and the tokenizer.
+    required = needed * 1.15
+    if available >= required:
+        return
+
+    raise RuntimeError(
+        f"Not enough RAM to load {base_model} on CPU.\n"
+        f"  weights:   {needed / gb:.1f} GB\n"
+        f"  need:      {required / gb:.1f} GB (weights + activations)\n"
+        f"  available: {available / gb:.1f} GB\n\n"
+        "Close other applications to free memory, or run the model on a "
+        "machine with a CUDA GPU and reach it over the network "
+        "(launch_chat.py ... --share).\n"
+        "The blind evaluation's --oracle mode needs no model at all and "
+        "runs fine here."
+    )
+
+
 def load_model_and_tokenizer(
     base_model: str,
     adapter_path: Optional[str] = None,
@@ -79,12 +144,25 @@ def load_model_and_tokenizer(
             bnb_4bit_use_double_quant=True,
         )
 
+    on_cpu = not torch.cuda.is_available()
+    if on_cpu:
+        _check_cpu_headroom(base_model)
+
+    # device_map="auto" hands the load to accelerate. On a GPU that is what we
+    # want. On CPU it is actively harmful: anything that does not fit is
+    # offloaded to disk and left on the meta device, adapter weights written to
+    # those layers are silently dropped, and PEFT's offload fix-up then fails
+    # with a KeyError about a mangled module path. Loading straight to CPU
+    # keeps every parameter real, and the headroom check above is what decides
+    # whether it fits.
+    device_map = None if on_cpu else "auto"
+
     # Load base model
     logger.info("Loading model: %s", base_model)
     model = AutoModelForCausalLM.from_pretrained(
         base_model,
         quantization_config=bnb_config,
-        device_map="auto",
+        device_map=device_map,
         dtype=compute_dtype,
         trust_remote_code=True,
     )
