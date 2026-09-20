@@ -20,6 +20,18 @@ from litigpt.model_utils import (
 
 logger = logging.getLogger(__name__)
 
+# Gradio 6 takes css on launch() rather than on the Blocks constructor.
+CUSTOM_CSS = """
+.gradio-container {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+.chat-message {
+    padding: 10px;
+    border-radius: 8px;
+    margin: 5px 0;
+}
+"""
+
 class GradioChatInterface:
     def __init__(self,
                  model_path: str,
@@ -57,17 +69,22 @@ class GradioChatInterface:
                          max_tokens: int = 256) -> str:
         """Generate response to user message"""
 
-        # Build conversation context
-        conversation = []
-        for user_msg, bot_msg in history:
-            conversation.append(f"user: {user_msg}")
-            conversation.append(f"assistant: {bot_msg}")
-        conversation.append(f"user: {message}")
-
-        context = "\n".join(conversation)
-
         # Build prompt — always include username
         effective_user = username or (self.available_users[0] if self.available_users else DEFAULT_USERNAME)
+
+        # Build conversation context as a Reddit thread, matching the training
+        # format: every prior comment is prefixed with its author, and the
+        # model's own past turns carry the persona's name rather than a
+        # generic "assistant" label it never saw during fine-tuning.
+        conversation = []
+        for turn in history or []:
+            role = turn.get("role")
+            content = turn.get("content", "")
+            speaker = "utente" if role == "user" else effective_user
+            conversation.append(f"{speaker}: {content}")
+        conversation.append(f"utente: {message}")
+
+        context = "\n".join(conversation)
         system_prompt = build_system_prompt(effective_user)
 
         messages = [
@@ -107,19 +124,7 @@ class GradioChatInterface:
     def create_interface(self):
         """Create Gradio interface"""
 
-        # Custom CSS
-        css = """
-        .gradio-container {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-        .chat-message {
-            padding: 10px;
-            border-radius: 8px;
-            margin: 5px 0;
-        }
-        """
-
-        with gr.Blocks(css=css, title="Reddit Bot Chat") as demo:
+        with gr.Blocks(title="Reddit Bot Chat") as demo:
             gr.Markdown(
                 """
                 # [Bot] Reddit Bot Chat Interface
@@ -133,7 +138,6 @@ class GradioChatInterface:
                         height=500,
                         label="Conversation",
                         show_label=True,
-                        bubble_full_width=False,
                     )
 
                     with gr.Row():
@@ -202,6 +206,7 @@ class GradioChatInterface:
 
             # Event handlers
             def respond(message, chat_history, username, temp, max_tok):
+                chat_history = chat_history or []
                 if not message.strip():
                     return "", chat_history
 
@@ -213,15 +218,26 @@ class GradioChatInterface:
                     max_tok,
                 )
 
-                chat_history.append((message, response))
-                return "", chat_history
+                return "", chat_history + [
+                    {"role": "user", "content": message},
+                    {"role": "assistant", "content": response},
+                ]
 
             def retry_last(chat_history, username, temp, max_tok):
-                if not chat_history:
+                chat_history = chat_history or []
+
+                # Walk back to the last user message, dropping it and anything
+                # after it, then answer it again.
+                last_user = next(
+                    (i for i in range(len(chat_history) - 1, -1, -1)
+                     if chat_history[i].get("role") == "user"),
+                    None,
+                )
+                if last_user is None:
                     return chat_history
 
-                last_message = chat_history[-1][0]
-                chat_history = chat_history[:-1]
+                last_message = chat_history[last_user].get("content", "")
+                chat_history = chat_history[:last_user]
 
                 response = self.generate_response(
                     last_message,
@@ -231,8 +247,10 @@ class GradioChatInterface:
                     max_tok,
                 )
 
-                chat_history.append((last_message, response))
-                return chat_history
+                return chat_history + [
+                    {"role": "user", "content": last_message},
+                    {"role": "assistant", "content": response},
+                ]
 
             # Wire up events
             msg.submit(
@@ -247,7 +265,7 @@ class GradioChatInterface:
                 [msg, chatbot],
             )
 
-            clear.click(lambda: None, None, chatbot, queue=False)
+            clear.click(lambda: [], None, chatbot, queue=False)
 
             retry.click(
                 retry_last,
@@ -263,6 +281,7 @@ class GradioChatInterface:
         demo.launch(
             share=share,
             server_port=server_port,
+            css=CUSTOM_CSS,
             show_error=True,
         )
 
