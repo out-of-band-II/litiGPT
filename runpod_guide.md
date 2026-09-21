@@ -143,6 +143,20 @@ Now a misdirected alias is a permission error instead of a silent success.
 **This cannot be retrofitted** — changing `PUBLIC_KEY` on a running pod does
 not re-run the provisioning that installs it. It means recreating the pod.
 
+**One consequence: the `ssh.runpod.io` proxy stops working for you.** RunPod
+offers two routes in, and they check different things:
+
+| Route | Authenticates against | Carries scp |
+|---|---|---|
+| Direct, `root@<ip> -p <port>` | the pod's own `PUBLIC_KEY` | yes |
+| Proxy, `<podid>-<hash>@ssh.runpod.io` | your **account-registered** keys | no |
+
+A per-pod key is deliberately not registered on the account, so the proxy
+refuses it — verified here, `Permission denied (publickey)`. That is the
+feature working, not a fault. Use the direct route, which needs `22/tcp` in
+the pod's exposed ports, and is the only route that carries file transfer
+anyway.
+
 ### Aliases
 
 Give every pod a project-specific alias. Never a generic `runpod`:
@@ -188,6 +202,22 @@ Use the **HTTPS** URL. The `origin` remote here is `git@github-anon:...`, where
 no idea what that means. (I skipped straight to `tar` on that basis without
 checking whether HTTPS would work. It would have. Cloning is better: `git pull`
 then updates the pod in one command.)
+
+**When the commits you need are not pushed yet**, a clone gets you the old
+code, which is worse than useless when the whole point of the run is a fix you
+just made. Send the history instead of publishing it:
+
+```bash
+git bundle create /tmp/litigpt.bundle main      # entire history, one file
+scp /tmp/litigpt.bundle litigpt-pod:/workspace/
+ssh litigpt-pod "cd /workspace && git clone litigpt-full.bundle litiGPT"
+```
+
+A bundle is a real git repository in a single file — the pod gets genuine
+history and a working `git log`, nothing is fetched from the internet, and
+nothing is published. The whole of this repo is about 400KB that way. To send
+only new commits onto an existing clone, bundle a range (`git bundle create
+f.bundle <base>..main`) and `git pull` the bundle on the pod.
 
 **Data and models: they are gitignored, so they have to be copied.** For a
 single file, `scp`. For a directory, tar over ssh is faster:
@@ -794,3 +824,122 @@ the pod is up. It is purely about which key was offered. `timed out` and
    `ssh litigpt-pod "hostname; ls -d /workspace/litiGPT"`.
 3. **Prefer a tunnel to a public port.** It costs one extra terminal and
    removes the entire question of who else can reach your app.
+
+---
+
+# Appendix B: Using a pod from VS Code or MobaXterm
+
+Both work, and both are just SSH underneath. Everything in Appendix A still
+applies: the same key, the same `~/.ssh/config` entry, the same host-key
+warning when a pod is recreated. Neither tool needs its own credentials.
+
+## One thing to settle first: direct SSH, not the proxy
+
+RunPod offers two ways in, and they authenticate differently:
+
+| Route | Address | Which key it accepts | Carries scp/sftp |
+|---|---|---|---|
+| **Direct** | `root@<ip> -p <high port>` | the pod's own `PUBLIC_KEY` | yes |
+| **Proxy** | `<podid>-<hash>@ssh.runpod.io` | your **account-registered** keys | no |
+
+This project sets a per-pod key (section 4) that is deliberately *not*
+registered on the account, so the proxy refuses it:
+
+```
+ams6n8th37ih4u-6441108a@ssh.runpod.io: Permission denied (publickey).
+```
+
+That is correct, not a fault. **Use the direct route for everything below.**
+It needs `22/tcp` in the pod's exposed ports, which this project always sets.
+VS Code additionally cannot use the proxy at all, because it copies and runs a
+server over the connection.
+
+## VS Code Remote-SSH
+
+This is the best of the options: you get the editor, a real terminal, and file
+browsing against the pod filesystem, with local extensions where they belong.
+
+**Install** the `Remote - SSH` extension (`ms-vscode-remote.remote-ssh`).
+
+**Connect.** Because `~/.ssh/config` already has the alias, there is nothing to
+configure:
+
+1. `F1` -> **Remote-SSH: Connect to Host**
+2. pick `litigpt-pod`
+3. choose **Linux** if it asks what the platform is
+4. `F1` -> **File: Open Folder** -> `/workspace/litiGPT`
+
+The window reloads and the bottom-left corner turns green with the host name.
+A terminal opened now (`` Ctrl+` ``) is a shell **on the pod**, in the right
+directory, which removes a whole category of mistake -- there is no longer a
+local terminal and a remote terminal that look identical.
+
+**Point it at the venv.** `F1` -> **Python: Select Interpreter** ->
+**Enter interpreter path** -> `/workspace/venv/bin/python`. Without this, the
+editor resolves imports against the system interpreter, which has none of the
+project dependencies, and every import is underlined in red while the code
+runs perfectly.
+
+**Forwarded ports come for free.** Start the Gradio app on the pod and VS Code
+notices the listening socket and forwards it automatically; the **Ports** panel
+next to the terminal lists it and turns it into a clickable
+`http://localhost:...`. This is the same SSH local forward as Appendix A, set
+up for you. You can also add one by hand in that panel, which is useful when
+the app started before the window connected.
+
+Two things to know:
+
+- **The first connect is slow.** VS Code downloads and installs its server into
+  `~/.vscode-server` on the pod, which is a minute or two. It lands on the
+  container filesystem, so a pod **restart** wipes it and the next connect pays
+  the cost again.
+- **It keeps a connection open.** That is not a problem for the pod, but the
+  pod is still billing whether or not you are typing. The editor being open is
+  not what costs money; the pod being `RUNNING` is.
+
+**When a pod is recreated**, update `HostName` and `Port` in `~/.ssh/config`
+and reconnect. If VS Code hangs on connect after that, the usual cause is the
+host-key change from Appendix A -- open a plain `ssh litigpt-pod` in a terminal
+first, where the error is actually readable, and fix it there.
+
+## MobaXterm
+
+Windows-native, and its strength is the built-in SFTP browser: connect a
+terminal and you get a file pane alongside it, drag-and-drop in both
+directions, with no scp syntax to remember.
+
+**Session** -> **SSH**, then:
+
+| Field | Value |
+|---|---|
+| Remote host | the pod IP, e.g. `213.173.107.97` |
+| Specify username | `root` |
+| Port | the pod's mapped SSH port, e.g. `11216` |
+| Advanced SSH settings -> Use private key | `C:\Users\rubio\.ssh\id_litigpt` |
+
+MobaXterm reads OpenSSH keys directly; there is no need to convert anything to
+PuTTY's `.ppk` format, and no need to run its key generator.
+
+It can also read `~/.ssh/config` if you point it there
+(**Settings -> Configuration -> SSH -> Use SSH config file**), after which the
+alias works as it does everywhere else and you stop maintaining the address in
+two places. Worth doing, given how often a pod address changes.
+
+**Tunnels** are under **Tunneling** -> **New SSH tunnel** -> *Local port
+forwarding*: listen on `7870` locally, forward to `localhost:7870` on the pod.
+The same `-L` from Appendix A, drawn as a diagram, and the diagram is a genuine
+help for remembering which side each hostname is resolved on.
+
+## Which to use
+
+- **VS Code** for anything involving editing code or reading logs while you
+  work. The terminal being unambiguously on the pod is worth a lot on its own.
+- **MobaXterm** for moving files around, or when you want a plain terminal
+  without an editor attached.
+- **Plain `ssh` from a terminal** for anything scripted, and for debugging a
+  connection -- both GUIs hide the error text that tells you what is wrong.
+
+None of them changes what is running on the pod. A training run started with
+`setsid nohup` (section 7) keeps going when you close any of them, and a run
+started in a VS Code terminal **without** `setsid nohup` dies when that window
+disconnects, exactly as it would over plain SSH.
