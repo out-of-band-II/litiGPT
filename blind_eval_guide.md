@@ -18,8 +18,9 @@ python launch_chat.py --interface blind \
     --classifier
 ```
 
-Opens on <http://127.0.0.1:7861>. Add `--share` for a public link, which is
-how you reach it when the model is on a RunPod box.
+Opens on <http://127.0.0.1:7861>. To run the model on a GPU box instead,
+see **Serving it from the pod** below — prefer an SSH tunnel over a public
+link, and require a login for anything public.
 
 ## Run the ceiling first
 
@@ -100,6 +101,76 @@ locked. Two narrower channels are handled explicitly:
 Masking cannot catch every self-reference — a persona called `Generale_Zod`
 that signs off as "Zod" slips through. It closes the common channel.
 
+## Serving it from the pod
+
+`scripts/pod_serve.sh` runs on the pod and starts the app detached, so it
+survives the SSH session that launched it. It writes a PID file and stops by
+that PID rather than by matching process names.
+
+```bash
+ssh litigpt-pod
+bash /workspace/litiGPT/scripts/pod_serve.sh blind
+bash /workspace/litiGPT/scripts/pod_serve.sh stop
+```
+
+It sets `HF_HOME=/workspace/.cache/huggingface` so the 7.6GB base model lands
+on the persistent volume rather than the container filesystem, which is wiped
+on restart, and launches with `python -u` so the log is readable while it runs.
+Override `LITIGPT_ADAPTER`, `LITIGPT_PORT`, `LITIGPT_HOST` or
+`LITIGPT_BASE_MODEL` in the environment. Modes are `blind`, `oracle`, `chat`
+and `stop`.
+
+### Reaching it: tunnel or proxy
+
+**SSH tunnel — private, and the default.** The app binds to `127.0.0.1` and
+only the tunnel can reach it. From your own machine:
+
+```bash
+ssh -N -L 7861:localhost:7861 litigpt-pod
+```
+
+Then open <http://localhost:7861>. Nothing is exposed to the internet.
+
+**RunPod HTTP proxy — public.** Every pod's exposed HTTP port is reachable at:
+
+```
+https://<POD_ID>-<PORT>.proxy.runpod.net
+```
+
+Pass `--host 0.0.0.0` so the app listens beyond localhost, and make sure the
+port is in the pod's exposed HTTP ports (editable on a running pod, not only
+at creation). Two properties of that proxy decide how you use it:
+
+- **It is public.** There is no authentication in front of it. The pod id is
+  obscurity, not access control, and RunPod's documentation says as much.
+- **Requests are dropped after 100 seconds.** Ample on a GPU, not on CPU.
+
+### Authentication is not optional here
+
+This app serves a model impersonating real, named people. Exposed through the
+proxy without a login, anyone who gets the URL can use it. So:
+
+```bash
+bash scripts/pod_serve.sh blind --host 0.0.0.0 --auth mario:unaPasswordVera
+```
+
+`--auth` takes `user:pass`, or several separated by commas so each rater has
+their own login. Verified behaviour with auth on: an anonymous visitor gets an
+empty loader page containing no persona names and no UI text, and the endpoint
+that actually invokes functions returns `401`. Launching on a non-localhost
+address without `--auth` logs a warning.
+
+The login name is recorded as the round's `rater`, and a "Chi sta giocando"
+box in the settings lets someone name themselves when there is no login.
+
+### Several people, one instance
+
+Rounds from everyone land in the same JSONL. The `rater` field is what keeps
+them apart, and it matters: pooling a careful rater with someone clicking at
+random produces a number that describes neither. Split by `rater` before
+reading any accuracy, and treat the ceiling as per-person — how identifiable
+these people are depends on how well the reader knows them.
+
 ## The log is the output
 
 Every completed round is appended to `data/eval/blind_eval.jsonl`: the secret,
@@ -122,7 +193,9 @@ separate scores.
 | `--oracle` | Real comments instead of generation. No GPU, no adapter. |
 | `--classifier` | TF-IDF attributor guesses alongside you. First run trains and caches it (~2 min). |
 | `--seed N` | Reproducible persona draw, for comparing two adapters on the same sequence. |
-| `--share` | Public Gradio link — how you reach a run hosted on a cloud GPU. |
+| `--auth` | Require a login: `user:pass`, or several comma-separated. Mandatory for anything reachable by others. |
+| `--host` | Bind address. `0.0.0.0` to serve beyond localhost, which the RunPod proxy needs. |
+| `--share` | Public Gradio link. Prefer an SSH tunnel; if you use this, pair it with `--auth`. |
 | `--no-4bit` | Full precision instead of 4-bit. |
 
 In-app: **Modalita** switches between multiple choice (2–8 options) and open

@@ -420,6 +420,7 @@ class BlindEvalInterface:
         guesses: Sequence[str],
         confidence: int,
         temperature: float,
+        rater: str = "",
     ) -> dict:
         """Build the log record for a finished round."""
         guesses = [g for g in guesses if g]
@@ -453,6 +454,11 @@ class BlindEvalInterface:
             # "model" rounds and "oracle" rounds answer different questions and
             # must never be averaged together; the scoreboard keeps them apart.
             "source": self.source,
+            # Who was guessing. With several people sharing one instance their
+            # rounds land in the same log, and pooling strangers' scores would
+            # be meaningless — one careful rater and one clicking at random
+            # average to something that describes neither.
+            "rater": rater or "anonimo",
             "mode": round_state.mode,
             "n_choices": round_state.n_choices,
             "chance": round(round_state.chance, 4),
@@ -731,6 +737,11 @@ class BlindEvalInterface:
                             value=True, label="Nascondi il nome della persona",
                             info="Impedisce al modello di identificarsi",
                         )
+                        rater = gr.Textbox(
+                            value="", label="Chi sta giocando",
+                            info=("Registrato con ogni round. Compilato in "
+                                  "automatico se hai fatto il login."),
+                        )
 
             with gr.Accordion("Punteggio", open=True):
                 scoreboard = gr.Markdown(
@@ -778,7 +789,8 @@ class BlindEvalInterface:
                 ]
                 return "", history, state, f"*{len(state.turns)} scambi.*"
 
-            def on_guess(state, board, g1, g2, g3, conf, temp):
+            def on_guess(state, board, g1, g2, g3, conf, temp, who,
+                         request: gr.Request):
                 if state is None:
                     return ("*Nessun round attivo.*", gr.update(), board, state,
                             gr.update())
@@ -789,8 +801,12 @@ class BlindEvalInterface:
                     return ("*Scegli almeno la prima opzione.*", gr.update(),
                             board, state, gr.update())
 
+                # Prefer the login name when the app is served with auth, so
+                # shared instances attribute rounds without anyone typing it.
+                who = (who or "").strip() or getattr(request, "username", "") or ""
+
                 state.guessed = True
-                record = self.score_round(state, [g1, g2, g3], conf, temp)
+                record = self.score_round(state, [g1, g2, g3], conf, temp, who)
                 self.append_log(record)
                 board.records.append(record)
 
@@ -818,19 +834,29 @@ class BlindEvalInterface:
             submit_guess.click(
                 on_guess,
                 [round_state, board_state, guess1, guess2, guess3,
-                 confidence, temperature],
+                 confidence, temperature, rater],
                 [reveal, scoreboard, board_state, round_state, submit_guess],
             )
 
         return demo
 
     def launch(self, share: bool = False, server_port: int = 7861,
-               server_name: str = "127.0.0.1"):
+               server_name: str = "127.0.0.1", auth=None):
         demo = self.create_interface()
+
+        if auth is None and server_name not in ("127.0.0.1", "localhost"):
+            logger.warning(
+                "Serving on %s with no authentication. Anyone who can reach "
+                "this port can chat with a model impersonating real, named "
+                "people. Pass --auth user:pass unless the port is reachable "
+                "only through an SSH tunnel.", server_name,
+            )
+
         demo.launch(
             share=share,
             server_port=server_port,
             server_name=server_name,
+            auth=auth,
             show_error=True,
         )
 
@@ -869,10 +895,31 @@ def main():
     parser.add_argument("--seed", type=int, default=None,
                         help="Seed the persona draw (for reproducible sessions)")
     parser.add_argument("--share", action="store_true", help="Public Gradio link")
-    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--host", default="127.0.0.1",
+                        help="Bind address. 0.0.0.0 to serve beyond localhost, "
+                             "which a RunPod HTTP port needs")
     parser.add_argument("--port", type=int, default=7861)
+    parser.add_argument(
+        "--auth", default=None,
+        help="Require a login: 'user:pass', or several separated by commas. "
+             "The login name is recorded with each round. Use this whenever "
+             "the app is reachable by anyone but you — a RunPod HTTP port and "
+             "a --share link are both public to whoever has the URL.",
+    )
 
     args = parser.parse_args()
+
+    auth = None
+    if args.auth:
+        auth = []
+        for pair in args.auth.split(","):
+            pair = pair.strip()
+            if not pair or ":" not in pair:
+                parser.error(f"--auth entry {pair!r} is not 'user:pass'")
+            user, _, password = pair.partition(":")
+            if not user or not password:
+                parser.error(f"--auth entry {pair!r} needs both a user and a password")
+            auth.append((user, password))
 
     if not args.oracle and not args.model:
         parser.error("--model is required unless --oracle is given")
@@ -921,7 +968,8 @@ def main():
         source="oracle" if args.oracle else "model",
     )
 
-    interface.launch(share=args.share, server_port=args.port, server_name=args.host)
+    interface.launch(share=args.share, server_port=args.port,
+                     server_name=args.host, auth=auth)
 
 
 if __name__ == "__main__":
