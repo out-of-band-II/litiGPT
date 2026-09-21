@@ -10,14 +10,15 @@ import logging
 import random
 from collections import deque
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Tuple
 import os
 from dotenv import load_dotenv
 
 # Import inference module
 from litigpt.inference.generator import RedditBotInference
 from litigpt.inference.classifier import UserSelector, RandomUserSelector
-from litigpt.model_utils import DEFAULT_USERNAME, DEFAULT_BASE_MODEL
+from litigpt.model_utils import DEFAULT_USERNAME
+from litigpt.prompts import render_thread
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,9 @@ class RedditBot:
                  available_users: Optional[List[str]] = None,
                  user_selector: Optional[UserSelector] = None,
                  max_depth: int = 3,
-                 inference_config: Optional[dict] = None):
+                 inference_config: Optional[dict] = None,
+                 mention_poll_seconds: int = 300,
+                 idle_sleep_seconds: int = 5):
         """
         Initialize Reddit bot.
 
@@ -90,6 +93,12 @@ class RedditBot:
         self._processed_set: set = set()
         self.last_reply_time = 0
         self.max_depth = max_depth
+
+        # Mentions are polled from inside the comment loop, whenever the
+        # stream has caught up. 0 makes the first idle moment check them.
+        self.mention_poll_seconds = mention_poll_seconds
+        self.idle_sleep_seconds = idle_sleep_seconds
+        self._last_mention_check = 0
 
         logger.info(f"Bot initialized for r/{subreddit_name}")
         logger.info(f"Available users: {', '.join(self.available_users) or '(default)'}")
@@ -168,39 +177,60 @@ class RedditBot:
 
         return True
 
-    def get_comment_context(self, comment) -> str:
-        """Build conversation context from comment thread"""
+    @staticmethod
+    def _speaker(thing) -> str:
+        """Author name of a comment or submission, as training spells it."""
+        return thing.author.name if thing.author else "[deleted]"
 
-        context_parts = []
+    def _submission_turn(self, submission) -> Tuple[str, str]:
+        """
+        Render a submission as one thread turn.
+
+        Deliberately the post's author and selftext only. Training builds
+        context items from the raw dump and renders a post exactly like a
+        comment -- see RedditDataPreprocessor._format_context, which reads
+        'author' and falls back from 'body' to 'selftext'. The title is not
+        part of that, and neither is a "Post:" label. Adding either here
+        would feed the model a shape it never saw in training.
+        """
+        return (self._speaker(submission), submission.selftext[:500])
+
+    def get_comment_context(self, comment) -> str:
+        """
+        Build conversation context from a comment thread.
+
+        Goes through litigpt.prompts.render_thread rather than formatting the
+        lines here: that renderer is the single definition of the thread
+        format, and this module posts to a live subreddit, where a format the
+        model never trained on degrades every reply and raises nothing.
+        """
+
+        turns: List[Tuple[str, str]] = []
         current = comment
 
-        # Get parent comments
+        # Walk up to the parents, newest last.
         for _ in range(self.max_depth):
             if current.is_root:
-                # Get post title/body
-                submission = current.submission
-                context_parts.insert(0, f"Post: {submission.title}\n{submission.selftext[:500]}")
+                turns.insert(0, self._submission_turn(current.submission))
                 break
 
             try:
                 parent = current.parent()
                 if isinstance(parent, Comment):
-                    author = parent.author.name if parent.author else "[deleted]"
-                    context_parts.insert(0, f"{author}: {parent.body}")
+                    turns.insert(0, (self._speaker(parent), parent.body))
                     current = parent
                 else:
-                    # Parent is submission
-                    context_parts.insert(0, f"Post: {parent.title}\n{parent.selftext[:500]}")
+                    # Parent is the submission.
+                    turns.insert(0, self._submission_turn(parent))
                     break
             except Exception as e:
                 logger.warning(f"Error getting parent: {e}")
                 break
 
-        # Add the comment we're responding to
-        author = comment.author.name if comment.author else "[deleted]"
-        context_parts.append(f"{author}: {comment.body}")
+        # The comment being replied to closes the thread.
+        turns.append((self._speaker(comment), comment.body))
 
-        return "\n".join(context_parts)
+        return render_thread(turns)
 
     def select_user_for_context(self, context: str) -> str:
         """
@@ -257,13 +287,29 @@ class RedditBot:
         except Exception as e:
             logger.error(f"Error posting reply: {e}")
 
-    def monitor_comments(self):
-        """Monitor subreddit for new comments"""
+    def monitor_comments(self, monitor_mentions: bool = True):
+        """
+        Monitor the subreddit for new comments, and service mentions in the gaps.
+
+        The stream is opened with pause_after=-1 so it yields None once it has
+        caught up instead of blocking. That idle moment is the only place the
+        loop is free to do anything else, so it is where mentions are checked.
+        Opening the stream without it is why mentions used to be polled once at
+        startup and then never again for the life of the process.
+        """
 
         logger.info("Starting comment monitoring...")
 
         try:
-            for comment in self.subreddit.stream.comments(skip_existing=True):
+            for comment in self.subreddit.stream.comments(skip_existing=True,
+                                                          pause_after=-1):
+                if comment is None:
+                    # Caught up with the subreddit.
+                    if monitor_mentions:
+                        self._poll_mentions_if_due()
+                    time.sleep(self.idle_sleep_seconds)
+                    continue
+
                 try:
                     if self.should_respond(comment):
                         logger.info(f"\nProcessing comment {comment.id} by {comment.author}")
@@ -281,18 +327,41 @@ class RedditBot:
             logger.error(f"Fatal error: {e}")
             raise
 
-    def reply_to_mentions(self):
-        """Monitor and reply to username mentions"""
+    def _poll_mentions_if_due(self):
+        """Check mentions if enough time has passed since the last check."""
+        now = time.time()
+        if now - self._last_mention_check < self.mention_poll_seconds:
+            return
+        self._last_mention_check = now
+        try:
+            self.reply_to_mentions()
+        except Exception as e:
+            logger.error(f"Error polling mentions: {e}")
 
-        logger.info("Monitoring mentions...")
+    def reply_to_mentions(self):
+        """
+        Reply to username mentions of the bot.
+
+        Open question: a mention is the one place a human states intent, so it
+        is the natural way to ask the bot to answer *as* a particular persona
+        ("u/litiGPT come tommyrugby"). Nothing parses that yet -- the persona
+        still comes from self.user_selector like any other reply. Implementing
+        it means a UserSelector that reads the request out of the context, not
+        a special case here.
+        """
 
         for mention in self.reddit.inbox.mentions(limit=25):
-            if not self._is_processed(mention.id):
-                try:
-                    logger.info(f"Processing mention from {mention.author}")
-                    self.generate_and_post_reply(mention)
-                except Exception as e:
-                    logger.error(f"Error replying to mention: {e}")
+            if self._is_processed(mention.id):
+                continue
+            try:
+                logger.info(f"Processing mention from {mention.author}")
+                self.generate_and_post_reply(mention)
+            except Exception as e:
+                logger.error(f"Error replying to mention: {e}")
+            finally:
+                # Mark either way: a mention that failed once will fail again
+                # on every poll, and retrying it forever starves the stream.
+                self._mark_processed(mention.id)
 
     def run(self, monitor_mentions: bool = True):
         """Run the bot"""
@@ -300,34 +369,16 @@ class RedditBot:
         logger.info(f"Starting Reddit bot for r/{self.subreddit.display_name}")
         logger.info(f"Trigger keywords: {self.trigger_keywords or 'None (all comments)'}")
         logger.info(f"Reply probability: {self.reply_probability}")
-
-        # Check mentions first
         if monitor_mentions:
-            self.reply_to_mentions()
+            logger.info(f"Mention poll interval: {self.mention_poll_seconds}s")
 
-        # Start monitoring
-        self.monitor_comments()
+        self.monitor_comments(monitor_mentions=monitor_mentions)
 
-if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler('reddit_bot.log'),
-            logging.StreamHandler()
-        ]
-    )
 
-    bot = RedditBot(
-        model_path="models/reddit_bot_lora",
-        base_model=DEFAULT_BASE_MODEL,
-        subreddit_name="test",
-        bot_username="litiGPT",
-        trigger_keywords=None,
-        reply_probability=0.2,
-        min_score_threshold=1,
-        cooldown_seconds=120,
-        available_users=["alice", "bob", "charlie"],
-    )
-
-    # bot.run()
+# No __main__ here on purpose. There used to be one, and it constructed a bot
+# with a hardcoded model path, subreddit and persona list, read no config, and
+# then left `bot.run()` commented out -- so `python -m litigpt.deployment
+# .reddit_bot` loaded a 4-bit model, authenticated to Reddit and exited. The
+# single entry point is the pipeline, which builds all of this from config:
+#
+#     python -m litigpt.pipeline --step deploy --config config.top30.yaml

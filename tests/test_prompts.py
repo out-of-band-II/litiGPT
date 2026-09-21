@@ -188,6 +188,13 @@ class TestNoSecondImplementation:
         "litigpt/interface/gradio_app.py",
         "litigpt/interface/ollama.py",
         "litigpt/interface/blind_eval.py",
+        # The bot was missing from this list until 2026-09-21, and it was the
+        # one module actually posting to a subreddit. It rendered parents as
+        # f"{author}: {body}" by hand and posts as f"Post: {title}\n{selftext}"
+        # -- an English label and a title that appear nowhere in the training
+        # data. Guarding the interfaces and not the deployment target is how
+        # that survived the fix that removed the same bug from the interfaces.
+        "litigpt/deployment/reddit_bot.py",
     ]
 
     @staticmethod
