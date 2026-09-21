@@ -37,6 +37,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from litigpt.prompts import render_thread, DEFAULT_HUMAN_HANDLE
+
 logger = logging.getLogger(__name__)
 
 NAME_PLACEHOLDER = "[nome rimosso]"
@@ -46,11 +48,8 @@ NAME_PLACEHOLDER = "[nome rimosso]"
 # the distribution the adapter actually saw.
 DEFAULT_CONTEXT_TURNS = 3
 
-# The handle the human's own messages are prefixed with in the prompt.
-# Deliberately not a cohort member: using a real member's name would invite the
-# persona's feelings about that specific person into the reply, which is a
-# confound in a test about style.
-DEFAULT_HUMAN_HANDLE = "utente"
+# DEFAULT_HUMAN_HANDLE is imported from litigpt.prompts, alongside the thread
+# renderer, so the handle and the format it appears in cannot drift apart.
 
 
 # ----------------------------------------------------------------------
@@ -375,13 +374,12 @@ class BlindEvalInterface:
         exactly as it did in training. This string is a prompt, not output — it
         is never rendered to the browser before the reveal.
         """
-        lines: List[str] = []
+        turns: List[Tuple[str, str]] = []
         for turn in round_state.turns[-context_turns:]:
-            lines.append(f"{human_handle}: {turn['user']}")
-            if turn.get("bot_raw"):
-                lines.append(f"{round_state.secret}: {turn['bot_raw']}")
-        lines.append(f"{human_handle}: {message}")
-        return "\n".join(lines)
+            turns.append((human_handle, turn["user"]))
+            turns.append((round_state.secret, turn.get("bot_raw", "")))
+        turns.append((human_handle, message))
+        return render_thread(turns)
 
     def generate_reply(
         self,

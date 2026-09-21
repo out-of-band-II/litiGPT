@@ -10,7 +10,7 @@ import torch
 from pathlib import Path
 from typing import List, Tuple, Optional
 from litigpt.config import Config
-from litigpt.prompts import build_system_prompt
+from litigpt.prompts import build_system_prompt, render_thread, DEFAULT_HUMAN_HANDLE
 from litigpt.model_utils import (
     load_model_and_tokenizer,
     load_user_metadata,
@@ -76,15 +76,16 @@ class GradioChatInterface:
         # format: every prior comment is prefixed with its author, and the
         # model's own past turns carry the persona's name rather than a
         # generic "assistant" label it never saw during fine-tuning.
-        conversation = []
-        for turn in history or []:
-            role = turn.get("role")
-            content = turn.get("content", "")
-            speaker = "utente" if role == "user" else effective_user
-            conversation.append(f"{speaker}: {content}")
-        conversation.append(f"utente: {message}")
-
-        context = "\n".join(conversation)
+        context = render_thread(
+            [
+                (
+                    DEFAULT_HUMAN_HANDLE if turn.get("role") == "user" else effective_user,
+                    turn.get("content", ""),
+                )
+                for turn in history or []
+            ]
+            + [(DEFAULT_HUMAN_HANDLE, message)]
+        )
         system_prompt = build_system_prompt(effective_user)
 
         messages = [

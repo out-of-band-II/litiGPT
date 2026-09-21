@@ -13,7 +13,11 @@ from pathlib import Path
 import polars as pl
 from argparse import ArgumentParser
 
-from litigpt.prompts import build_system_prompt, build_alpaca_instruction
+from litigpt.prompts import (
+    build_system_prompt,
+    build_alpaca_instruction,
+    render_thread,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -225,17 +229,20 @@ class RedditDataPreprocessor:
         return all_pairs
 
     def _format_context(self, context_items: List[Dict]) -> str:
-        """Format context items into a single string"""
-        formatted = []
+        """
+        Format context items into a single string.
 
-        for item in context_items:
-            author = item.get('author', 'unknown')
-            body = self.clean_text(item.get('body') or item.get('selftext', ''))
-
-            if body:
-                formatted.append(f"{author}: {body}")
-
-        return "\n".join(formatted)
+        This is the definition of the thread format every interface has to
+        match at inference time, so it goes through the shared renderer rather
+        than building the string here.
+        """
+        return render_thread(
+            (
+                item.get('author', 'unknown'),
+                self.clean_text(item.get('body') or item.get('selftext', '')),
+            )
+            for item in context_items
+        )
 
     def format_for_training(self, pairs: List[Dict],
                            format_type: str = "chatml") -> List[Dict]:

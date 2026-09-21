@@ -10,7 +10,7 @@ from pathlib import Path
 import json
 from typing import List, Dict, Optional
 from litigpt.config import Config
-from litigpt.prompts import build_system_prompt
+from litigpt.prompts import build_system_prompt, render_thread, DEFAULT_HUMAN_HANDLE
 from litigpt.model_utils import (
     load_model_and_tokenizer,
     load_user_metadata,
@@ -64,19 +64,26 @@ class OllamaChatInterface:
 
         history = self.conversations[session_id]
 
-        # Build context
-        conversation = []
-        for msg in history:
-            if msg['role'] == 'user':
-                conversation.append(f"user: {msg['content']}")
-            else:
-                conversation.append(f"assistant: {msg['content']}")
-        conversation.append(f"user: {message}")
-
-        context = "\n".join(conversation)
-
-        # Build prompt — always include username
+        # Build prompt — always include username. This has to come first: the
+        # thread below labels the model's own past turns with the persona name,
+        # exactly as training did.
         effective_user = username or (self.available_users[0] if self.available_users else DEFAULT_USERNAME)
+
+        # Render the exchange as a Reddit thread in the training format. This
+        # previously used the English role labels "user" and "assistant",
+        # which appear nowhere in the training data — every context there is
+        # built from real Reddit usernames.
+        context = render_thread(
+            [
+                (
+                    DEFAULT_HUMAN_HANDLE if msg['role'] == 'user' else effective_user,
+                    msg['content'],
+                )
+                for msg in history
+            ]
+            + [(DEFAULT_HUMAN_HANDLE, message)]
+        )
+
         system_prompt = build_system_prompt(effective_user)
 
         messages = [
