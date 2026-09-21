@@ -3,23 +3,8 @@
 Training litiGPT on a rented GPU. Two paths: a bootstrap script on a stock
 RunPod template (fastest), or a pinned container image (reproducible).
 
-Colab and Kaggle remain documented in [colab_kaggle_guide.md](colab_kaggle_guide.md);
-RunPod is the option without a session time limit.
-
----
-
-## Why RunPod over Colab/Kaggle
-
-| | Colab Free | Kaggle | RunPod |
-|---|---|---|---|
-| Session cap | ~12 h, pre-emptible | 9 h/week quota | none |
-| GPU choice | whatever is assigned | P100 / T4 ×2 | you pick |
-| Persistent storage | Drive mount | /kaggle/working | network volume |
-| Cost | free / $10 mo | free | per-second billing |
-
-A 3-epoch run on ~2k comments finishes well inside Colab's window, so RunPod
-earns its cost when you want a **specific** GPU, a larger base model, or
-unattended multi-run sweeps.
+RunPod is where litiGPT trains. The top-30 run took 3h35m on an RTX 4090
+at $0.74/hr, which no free tier will sit still for.
 
 ---
 

@@ -1,653 +1,302 @@
-- [Reddit Chatbot Pipeline - Complete Guide](#reddit-chatbot-pipeline---complete-guide)
-  - [Overview](#overview)
-  - [Requirements](#requirements)
-    - [Hardware](#hardware)
-    - [Software](#software)
-  - [Installation](#installation)
-    - [1. Clone and Setup](#1-clone-and-setup)
-    - [2. Install Dependencies](#2-install-dependencies)
-    - [2b. Docker Setup (Alternative)](#2b-docker-setup-alternative)
-    - [3. Project Structure](#3-project-structure)
-    - [4. Configure Reddit API](#4-configure-reddit-api)
-  - [Quick Start](#quick-start)
-    - [Option 1: Run Full Pipeline](#option-1-run-full-pipeline)
-    - [Option 2: Step-by-Step](#option-2-step-by-step)
-  - [Module Breakdown](#module-breakdown)
-    - [Data Extraction](#data-extraction)
-    - [Preprocessing](#preprocessing)
-    - [Training](#training)
-    - [Inference](#inference)
-    - [Deployment](#deployment)
-  - [Configuration](#configuration)
-    - [config.yaml](#configyaml)
-  - [Usage](#usage)
-    - [Training Tips](#training-tips)
-    - [Interactive Testing](#interactive-testing)
-    - [Custom Deployment](#custom-deployment)
-  - [Troubleshooting](#troubleshooting)
-    - [Out of Memory (OOM)](#out-of-memory-oom)
-    - [Poor Response Quality](#poor-response-quality)
-    - [Bot Not Responding](#bot-not-responding)
-    - [Slow Training](#slow-training)
-  - [Advanced Topics](#advanced-topics)
-    - [Experiment Tracking with MLflow](#experiment-tracking-with-mlflow)
-    - [Docker Deployment](#docker-deployment)
-    - [Cloud Deployment](#cloud-deployment)
-    - [Using Different Models](#using-different-models)
-    - [Multi-GPU Training](#multi-gpu-training)
-    - [Faster Inference with vLLM](#faster-inference-with-vllm)
-    - [Merging LoRA Adapters](#merging-lora-adapters)
-    - [Custom Conversation Context](#custom-conversation-context)
-  - [Performance Benchmarks](#performance-benchmarks)
-  - [Ethics \& Best Practices](#ethics--best-practices)
-  - [License \& Credits](#license--credits)
-  - [Support](#support)
-  - [Next Steps](#next-steps)
+# litiGPT
 
+Fine-tune a language model on real Reddit users, then test whether anyone can
+tell which one it is imitating.
 
-# Reddit Chatbot Pipeline - Complete Guide
+litiGPT takes a subreddit dump, builds a training set of context/reply pairs
+for a cohort of prolific authors, fine-tunes a single QLoRA adapter that learns
+all of them at once, and serves it behind three interfaces — a chat UI, a
+streaming API, and a blind evaluation where you guess which persona is
+answering. It targets an Italian subreddit, so every prompt the model sees is
+in Italian.
 
-A modular pipeline for creating a Reddit chatbot that mimics a specific user's writing style using fine-tuned language models.
-
+One model holds every persona. The username is always part of the system
+prompt, in training and at inference, so switching personas is a prompt change
+rather than a model swap.
 
 ---
 
-## Overview
+## Contents
 
-This pipeline takes Reddit conversation data (JSONL format) and creates a chatbot that can:
-- Learn a specific user's writing style and tone
-- Respond contextually to Reddit comments
-- Deploy as an automated Reddit bot
+- [How it works](#how-it-works)
+- [Install](#install)
+- [Running the pipeline](#running-the-pipeline)
+- [Chat interfaces](#chat-interfaces)
+- [Blind evaluation](#blind-evaluation)
+- [Configuration](#configuration)
+- [Training on a rented GPU](#training-on-a-rented-gpu)
+- [Deploying to Reddit](#deploying-to-reddit)
+- [Tests](#tests)
+- [Troubleshooting](#troubleshooting)
+- [Ethics](#ethics)
 
-**Pipeline Flow:**
+---
+
+## How it works
+
 ```
-Reddit JSONL Data → Extract User Data → Preprocess & Format → 
-Fine-tune Model → Evaluate → Deploy to Reddit
+subreddit dump (parquet/jsonl)
+  │
+  ├─ extract      pick the cohort, pull each author's comments with their parents
+  ├─ preprocess   clean, render threads, split prompt/completion, write train+val
+  ├─ train        QLoRA on one adapter that holds every persona
+  ├─ eval         blind rounds, TF-IDF attribution, MLflow curves
+  └─ deploy       optional: a bot that answers in a subreddit
 ```
 
+Two details carry most of the quality:
+
+**Loss is masked to the reply.** The prompt — system message plus parent
+comments — is labelled `-100` and contributes nothing. Without this the model
+spends most of its training signal learning to reproduce context it will be
+given for free at inference. In one measured run the reply was 33 of 231
+tokens, so 86% of the gradient was going to the wrong place.
+
+**LoRA target modules are detected, not named.** Projection names are
+architecture-specific: phi-3 fuses q/k/v into `qkv_proj` and gate/up into
+`gate_up_proj`. A hardcoded Llama list silently matched two of seven names and
+trained a third of the intended parameters with nothing on the attention
+queries or keys. Leave `lora.target_modules` empty; training now refuses to
+start if a name you supply matches no module.
+
 ---
 
-## Requirements
+## Install
 
-### Hardware
-- **Minimum**: 16GB RAM, 8GB VRAM GPU (RTX 3060, RTX 4060)
-- **Recommended**: 32GB RAM, 16GB+ VRAM GPU (RTX 4090, A4000)
-- **CPU Only**: Possible but very slow for training
-
-### Software
-- Python 3.10 or higher
-- CUDA 11.8+ (for GPU acceleration)
-- 50GB+ free disk space
-
----
-
-## Installation
-
-### 1. Clone and Setup
+Python 3.11+. [uv](https://docs.astral.sh/uv/) manages the environment.
 
 ```bash
-# Create project directory
-mkdir reddit-chatbot
-cd reddit-chatbot
-
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-
-### 2. Install Dependencies
-
-```bash
-# Install all dependencies (CPU-only torch by default)
 uv sync
-
-# For GPU training, install PyTorch with CUDA support:
-# CUDA 12.6
-uv pip install torch --extra-index-url https://download.pytorch.org/whl/cu126 --reinstall
-# CUDA 12.4
-uv pip install torch --extra-index-url https://download.pytorch.org/whl/cu124 --reinstall
-# CUDA 11.8
-uv pip install torch --extra-index-url https://download.pytorch.org/whl/cu118 --reinstall
 ```
 
-### 2b. Docker Setup (Alternative)
+That resolves a CPU-capable torch. For GPU training, reinstall torch against
+your CUDA version afterwards:
 
 ```bash
-# Using Docker Compose for full stack
-docker-compose up -d mlflow  # Start MLflow tracking server
-
-# For training (with GPU)
-docker-compose --profile training run --rm training
-
-# For bot deployment
-docker-compose --profile bot up -d bot
+uv pip install torch --extra-index-url https://download.pytorch.org/whl/cu128 --reinstall
 ```
 
-### 3. Project Structure
-
-```
-reddit-chatbot/
-├── data/
-│   ├── raw/              # Place your Reddit JSONL files here
-│   ├── processed/        # Extracted user data
-│   └── training/         # Formatted training data
-├── models/               # Trained models
-├── logs/                 # Bot logs
-├── litigpt/                  # Main package
-│   ├── data/
-│   │   ├── extraction.py     # Reddit data extraction
-│   │   ├── preprocessing.py  # Data cleaning & formatting
-│   │   └── preliminary.py    # Raw data conversion utilities
-│   ├── training/
-│   │   ├── trainer.py        # QLoRA fine-tuning
-│   │   └── tracking.py       # MLflow experiment tracking
-│   ├── inference/
-│   │   ├── generator.py      # Response generation
-│   │   └── classifier.py     # Multi-user classification
-│   ├── deployment/
-│   │   ├── reddit_bot.py     # Reddit bot deployment
-│   │   └── cloud.py          # Cloud deployment (AWS, GCP, K8s)
-│   ├── interface/
-│   │   ├── gradio_app.py     # Gradio chat UI
-│   │   └── ollama.py         # Ollama-compatible API
-│   ├── config.py             # Configuration setup
-│   └── pipeline.py           # Pipeline orchestrator
-├── launch_chat.py            # Quick-launch script for chat interfaces
-├── Dockerfile.training       # GPU training container
-├── Dockerfile.bot            # Lightweight bot container
-├── docker_compose.yaml       # Orchestration
-├── config.yaml
-├── .env
-└── requirements.txt
-```
-
-### 4. Configure Reddit API
-
-Create `.env` file:
-
-```env
-REDDIT_CLIENT_ID=your_client_id
-REDDIT_CLIENT_SECRET=your_client_secret
-REDDIT_USER_AGENT=MyBot/1.0 by /u/yourusername
-REDDIT_USERNAME=your_bot_username
-REDDIT_PASSWORD=your_bot_password
-```
-
-Get credentials at: https://www.reddit.com/prefs/apps
+Reddit credentials are only needed for the bot. Copy `.env.example` to `.env`
+and fill it in if you want one.
 
 ---
 
-## Quick Start
+## Running the pipeline
 
-### Option 1: Run Full Pipeline
-
-```bash
-# 1. Place your Reddit data in data/raw/
-#    - comments.jsonl
-#    - submissions.jsonl
-
-# 2. Edit config.yaml with target username
-
-# 3. Run complete pipeline
-python -m litigpt.pipeline --step all
-```
-
-### Option 2: Step-by-Step
+Each step reads the same config and writes what the next one expects.
 
 ```bash
-# Step 1: Extract user data
-python -m litigpt.pipeline --step extract
-
-# Step 2: Preprocess data
-python -m litigpt.pipeline --step preprocess
-
-# Step 3: Train model (2-8 hours depending on data size)
-python -m litigpt.pipeline --step train
-
-# Step 4: Evaluate model
-python -m litigpt.pipeline --step eval
-
-# Step 5: Deploy bot
-python -m litigpt.pipeline --step deploy
+python -m litigpt.pipeline --step extract    --config config.top30.yaml
+python -m litigpt.pipeline --step preprocess --config config.top30.yaml
+python -m litigpt.pipeline --step train      --config config.top30.yaml
+python -m litigpt.pipeline --step eval       --config config.top30.yaml
 ```
+
+`--step all` chains them. `--step deploy` starts the Reddit bot.
+
+If your raw data is zstd-compressed JSONL rather than parquet, convert it
+first — a separate pass because it is slow and you only do it once. This
+converts everything under `data/raw`, picking columns from each filename:
+
+```bash
+python -m litigpt.data.preliminary
+```
+
+Before spending GPU time, check what preprocessing produced:
+
+```bash
+python scripts/validate_dataset.py --config config.top30.yaml
+```
+
+It catches the cheap-to-fix, expensive-to-discover problems: personas with too
+few examples, a cohort so imbalanced the model collapses onto the loudest
+author, and markup that survived cleaning.
+
+### Rehearse locally first
+
+```bash
+bash scripts/wsl_smoke_test.sh
+```
+
+Runs every stage on three personas and 200 pairs against a 135M base. It takes
+minutes, costs nothing, and exercises the same code path as the real run — so
+breakage surfaces here rather than on a rented GPU.
 
 ---
 
-## Module Breakdown
+## Chat interfaces
 
-### Data Extraction
-**File**: `litigpt/data/extraction.py`
+All three load a base model plus your adapter and talk to it through the same
+prompt builder the training data was written with. Launch any of them with:
 
-Extracts target user's comments and posts from subreddit JSONL files.
-
-```python
-from litigpt.data.extraction import RedditDataExtractor
-
-extractor = RedditDataExtractor("data/raw")
-user_data = extractor.extract_user_data("target_username")
-extractor.save_processed_data(user_data, "data/processed/user_data.jsonl")
+```bash
+python launch_chat.py --interface {gradio|ollama|blind} --model models/litigpt_top30_lora/final
 ```
 
-### Preprocessing
-**File**: `litigpt/data/preprocessing.py`
+| Interface | Default port | What it is |
+|---|---|---|
+| `gradio` | 7860 | Chat UI with persona picker and sampling controls. `--share` for a public link. |
+| `ollama` | 5000 | Terminal-styled web UI with token streaming, over Flask. |
+| `blind` | 7861 | Blind persona evaluation — see below. |
 
-Cleans data, builds conversation context, formats for training.
+`--base-model` defaults to `microsoft/phi-3-mini-4k-instruct`, matching the
+configs. Override it if you trained on something else; the adapter will not
+load against the wrong base.
 
-```python
-from litigpt.data.preprocessing import RedditDataPreprocessor
+You can also run a module directly, which takes the same arguments minus the
+launcher's dispatch:
 
-preprocessor = RedditDataPreprocessor()
-user_data = preprocessor.filter_quality(user_data)
-pairs = preprocessor.create_training_pairs(user_data, all_comments)
-formatted = preprocessor.format_for_training(pairs, format_type="chatml")
+```bash
+python -m litigpt.interface.gradio_app --model models/litigpt_top30_lora/final
+python -m litigpt.interface.ollama     --model models/litigpt_top30_lora/final --port 5000
 ```
 
-### Training
-**File**: `litigpt/training/trainer.py`
+Serving from a RunPod pod instead of locally: `scripts/pod_serve.sh
+<blind|chat|stop>` starts an interface detached, so it survives the SSH session
+that launched it. It defaults to port 7870 and localhost deliberately — read
+its header before exposing it, since RunPod's HTTP proxy is public to anyone
+with the URL and this serves a model impersonating real, named people.
 
-Fine-tunes language model using QLoRA for efficiency.
+---
 
-```python
-from litigpt.training.trainer import RedditModelTrainer
+## Blind evaluation
 
-trainer = RedditModelTrainer(
-    model_name="meta-llama/Llama-3.1-8B-Instruct",
-    output_dir="models/reddit_bot_lora"
-)
-trainer.train(data_dir="data/training", num_epochs=3)
+The model answers as a persona drawn at random and you guess which. This is the
+measurement that matters — loss curves say the adapter fit the data, not that
+the personas are distinguishable.
+
+```bash
+# The ceiling first: real held-out comments, no model, no GPU.
+python launch_chat.py --interface blind --oracle
+
+# Then the model, with the TF-IDF attributor guessing alongside you.
+python launch_chat.py --interface blind --model models/litigpt_top30_lora/final --classifier
 ```
 
-**Training Parameters:**
-- **r=16**: LoRA rank (higher = more parameters, better quality, slower)
-- **lora_alpha=32**: LoRA scaling factor
-- **batch_size=4**: Adjust based on VRAM (lower if OOM errors)
-- **num_epochs=3**: More epochs for smaller datasets
+Run `--oracle` before reading any model score. It replays the persona's own
+comments, so it establishes how much identity the text carries at all — if
+humans cannot pick the real author apart, a model that also cannot is not
+failing.
 
-### Inference
-**File**: `litigpt/inference/generator.py`
-
-Generate responses using the fine-tuned model.
-
-```python
-from litigpt.inference.generator import RedditBotInference
-
-bot = RedditBotInference(
-    model_path="models/reddit_bot_lora",
-    base_model="meta-llama/Llama-3.1-8B-Instruct"
-)
-
-response = bot.generate_response(
-    context="user1: What's your favorite game?",
-    temperature=0.8
-)
-```
-
-**Inference Parameters:**
-- **temperature** (0.1-1.5): Higher = more creative/random
-- **top_p** (0.1-1.0): Nucleus sampling threshold
-- **max_new_tokens**: Maximum response length
-
-### Deployment
-**File**: `litigpt/deployment/reddit_bot.py`
-
-Deploys bot to monitor and respond on Reddit.
-
-```python
-from litigpt.deployment.reddit_bot import RedditBot
-
-bot = RedditBot(
-    model_path="models/reddit_bot_lora",
-    base_model="meta-llama/Llama-3.1-8B-Instruct",
-    subreddit_name="test",
-    bot_username="my_bot",
-    reply_probability=0.2
-)
-
-bot.run()
-```
+Full protocol, scoring, and how to read the disagreements between human and
+classifier: [blind_eval_guide.md](blind_eval_guide.md).
 
 ---
 
 ## Configuration
 
-### config.yaml
+Validated by Pydantic models in [litigpt/config.py](litigpt/config.py). Keys
+that do not exist there are accepted and ignored, so check spelling against
+that file rather than against another YAML.
 
-```yaml
-data:
-  target_username: "specific_reddit_user"  # User to mimic
-  min_comment_length: 10
-  max_comment_length: 512
+| File | Use |
+|---|---|
+| [config.default.yaml](config.default.yaml) | Annotated template, every key with its default. Ships in the container. |
+| [config.top30.yaml](config.top30.yaml) | The real 30-persona run, with the reasoning for each value written out. |
+| [config.smoke.yaml](config.smoke.yaml) | Tiny end-to-end rehearsal. |
+| [config.runpod.yaml](config.runpod.yaml) | Same as top30 with `/workspace` paths for a RunPod network volume. |
 
-model:
-  base_model: "meta-llama/Llama-3.1-8B-Instruct"
-  # Alternatives:
-  # - "mistralai/Mistral-7B-Instruct-v0.2"  # Similar performance
-  # - "microsoft/phi-3-mini-4k-instruct"     # Smaller, faster
+`config.yaml` is gitignored — copy the template there for local edits, or pass
+`--config` explicitly.
 
-training:
-  num_epochs: 3
-  batch_size: 4              # Reduce if out of memory
-  learning_rate: 2.0e-4
-  max_seq_length: 512
-
-bot:
-  subreddit: "test"
-  reply_probability: 0.2     # 20% chance to reply
-  cooldown_seconds: 120      # Wait 2 min between replies
-```
+There is no single-user mode. One persona is just `target_usernames` with one
+entry, and the prompt still names them.
 
 ---
 
-## Usage
+## Training on a rented GPU
 
-### Training Tips
+litiGPT trains on RunPod. Two paths, both in
+[cloud_training_guide.md](cloud_training_guide.md): a bootstrap script on a
+stock PyTorch template, or the pinned image in `Dockerfile.runpod`.
 
-**Small Dataset (< 500 comments)**
-```yaml
-training:
-  num_epochs: 5
-  learning_rate: 3.0e-4
+Operating a pod day to day — SSH, moving data, watching a run, and the watchdog
+that stops the pod when training ends so it stops billing — is in
+[runpod_guide.md](runpod_guide.md). Read the watchdog section before starting a
+long run: a finished job leaves the GPU idle at full price indefinitely.
+
+Reference point: 30 personas, ~54k training examples, phi-3-mini with r=32
+took 3h35m on an RTX 4090 at $0.74/hr.
+
+---
+
+## Deploying to Reddit
+
+```bash
+python -m litigpt.pipeline --step deploy --config config.top30.yaml
 ```
 
-**Large Dataset (> 2000 comments)**
-```yaml
-training:
-  num_epochs: 2
-  learning_rate: 1.0e-4
+That is the only entry point; it builds the bot from `bot:` and
+`user_classification:` in your config. The bot streams new comments, decides
+whether to answer, renders the thread through the shared prompt builder, and
+appends a disclaimer to every reply.
+
+Which persona it answers as comes from `user_classification.strategy`:
+`random` picks from `bot.available_users`, `keyword` routes on topic keywords.
+Both live in [litigpt/inference/classifier.py](litigpt/inference/classifier.py)
+behind a `UserSelector` protocol — `select_user(context, available_users)`
+returning `None` to fall back. A new strategy is one class implementing that.
+
+There is deliberately no model-based persona router.
+
+Run it where a GPU is: the adapter loads in 4-bit, and CPU inference is slow
+enough to be impractical for a live bot.
+
+---
+
+## Tests
+
+```bash
+uv run pytest
 ```
 
-**Memory Issues**
-```yaml
-training:
-  batch_size: 2
-  gradient_accumulation_steps: 8  # Effective batch size = 16
-```
+The suite targets failures that do not announce themselves — a LoRA target list
+matching no module, an interface rebuilding the thread format its own way, a
+persona name leaking into a blind round. Each of those once passed review and
+trained or served without error.
 
-### Interactive Testing
-
-```python
-from litigpt.inference.generator import RedditBotInference
-
-bot = RedditBotInference("models/reddit_bot_lora", "meta-llama/Llama-3.1-8B-Instruct")
-bot.interactive_mode()
-```
-
-### Custom Deployment
-
-```python
-from litigpt.deployment.reddit_bot import RedditBot
-
-bot = RedditBot(
-    model_path="models/reddit_bot_lora",
-    base_model="meta-llama/Llama-3.1-8B-Instruct",
-    subreddit_name="mysubreddit",
-    bot_username="mybot",
-    trigger_keywords=["help", "question"],  # Only respond to these
-    reply_probability=0.3,
-    min_score_threshold=2  # Only reply to upvoted comments
-)
-
-bot.run()
-```
+`tests/test_prompts.py::TestNoSecondImplementation` reads source rather than
+behaviour on purpose: the interfaces need a loaded model to exercise, so the
+guard is against a second implementation existing at all. If you add a module
+that renders threads, add it to that list.
 
 ---
 
 ## Troubleshooting
 
-### Out of Memory (OOM)
+**Out of memory.** Lower `training.batch_size` and raise
+`gradient_accumulation_steps` to keep the effective batch constant. Then
+`max_seq_length` — but note that shortening it drops examples whose prompt
+fills the window, since there is no reply left to learn from.
 
-**Training:**
-```python
-# Reduce batch size
-batch_size: 2
-gradient_accumulation_steps: 8
+**Fluent output that does not answer the question.** Check the loss mask before
+blaming model size. Verify which modules the adapter actually contains rather
+than trusting `adapter_config.json`, which records what was requested, not what
+matched:
 
-# Use smaller model
-base_model: "microsoft/phi-3-mini-4k-instruct"
+```bash
+python -c "import safetensors.torch as st; t=st.load_file('adapter_model.safetensors'); print(sorted({k.split('.')[-3] for k in t}))"
 ```
 
-**Inference:**
-```python
-# Use 8-bit quantization instead of 4-bit
-load_in_4bit=False
-load_in_8bit=True
-```
+**Every persona sounds the same.** Usually too little data per author, or a
+cohort so imbalanced the model collapsed onto the loudest. Run
+`scripts/validate_dataset.py` and set `data.max_pairs_per_user`.
 
-### Poor Response Quality
+**MLflow refuses to start.** Recent versions reject a file store. Use SQLite:
+`export MLFLOW_TRACKING_URI=sqlite:///$(pwd)/mlflow.db`.
 
-1. **Check training data quality**
-   - Need at least 500+ comment pairs
-   - User should have consistent style
-
-2. **Adjust hyperparameters**
-   ```yaml
-   training:
-     num_epochs: 5
-     learning_rate: 3.0e-4
-   ```
-
-3. **Tune inference parameters**
-   ```python
-   temperature=0.9  # More creative
-   repetition_penalty=1.2  # Less repetitive
-   ```
-
-### Bot Not Responding
-
-1. **Check Reddit credentials** in `.env`
-2. **Verify subreddit permissions** (some ban bots)
-3. **Check trigger keywords** match actual comments
-4. **Increase reply_probability** for testing
-
-### Slow Training
-
-- **Use smaller max_seq_length**: 256 instead of 512
-- **Use gradient checkpointing**: Already enabled
-- **Try Unsloth** for 2x faster training:
-  ```bash
-  pip install unsloth
-  ```
+**Bot posts nothing.** Check `.env` credentials, then `reply_probability` and
+`cooldown_seconds` — the defaults are deliberately quiet.
 
 ---
 
-## Advanced Topics
+## Ethics
 
-### Experiment Tracking with MLflow
+This trains on real, named people and reproduces how they write.
 
-**View Training Runs:**
-```bash
-# Start MLflow UI
-mlflow ui --port 5000
-
-# Or with Docker
-docker-compose up -d mlflow
-# Access at http://localhost:5000
-```
-
-**Compare Experiments:**
-```python
-from litigpt.training.tracking import MLflowTracker
-
-tracker = MLflowTracker()
-best_runs = tracker.compare_runs(metric="val_loss", n_best=5)
-```
-
-**Load Best Model:**
-```python
-best_model = tracker.load_best_model(metric="val_loss")
-```
-
-### Docker Deployment
-
-**Training Container (GPU):**
-```bash
-# Build
-docker build -f Dockerfile.training -t reddit-training .
-
-# Run training
-docker run --gpus all \
-  -v $(pwd)/data:/workspace/data \
-  -v $(pwd)/models:/workspace/models \
-  reddit-training
-```
-
-**Bot Container (CPU):**
-```bash
-# Build
-docker build -f Dockerfile.bot -t reddit-bot .
-
-# Run bot
-docker run -d \
-  --name reddit-bot \
-  -v $(pwd)/models:/app/models \
-  -v $(pwd)/.env:/app/.env \
-  --restart unless-stopped \
-  reddit-bot
-```
-
-**Full Stack with Docker Compose:**
-```bash
-# Start MLflow + Bot
-docker-compose --profile bot up -d
-
-# Run training
-docker-compose --profile training run --rm training
-
-# View logs
-docker-compose logs -f bot
-
-# Stop all
-docker-compose down
-```
-
-### Cloud Deployment
-
-**AWS ECS:**
-```python
-from litigpt.deployment.cloud import AWSDeployer
-
-deployer = AWSDeployer(region="us-east-1")
-repo_uri = deployer.create_ecr_repository()
-# Build and push Docker image to ECR
-# Then deploy to ECS
-```
-
-**Google Cloud Run:**
-```bash
-./deploy_gcp.sh
-```
-
-**Kubernetes:**
-```bash
-kubectl apply -f k8s-bot-deployment.yaml
-kubectl logs -f -n reddit-bot deployment/reddit-bot
-```
-
-### Using Different Models
-
-**Smaller/Faster (Phi-3):**
-```yaml
-model:
-  base_model: "microsoft/phi-3-mini-4k-instruct"
-```
-
-**Larger/Better (Mixtral):**
-```yaml
-model:
-  base_model: "mistralai/Mixtral-8x7B-Instruct-v0.1"
-  # Requires 40GB+ VRAM or multiple GPUs
-```
-
-### Multi-GPU Training
-
-```python
-# Automatically uses all available GPUs
-trainer.train()
-```
-
-### Faster Inference with vLLM
-
-```python
-from litigpt.inference.generator import RedditBotInferenceVLLM
-
-bot = RedditBotInferenceVLLM("models/reddit_bot_lora_merged")
-response = bot.generate_response(context, temperature=0.8)
-```
-
-### Merging LoRA Adapters
-
-```python
-from litigpt.training.trainer import RedditModelTrainer
-
-trainer = RedditModelTrainer("meta-llama/Llama-3.1-8B-Instruct", "models/output")
-merged_path = trainer.merge_and_save_full_model("models/reddit_bot_lora")
-```
-
-### Custom Conversation Context
-
-```python
-from litigpt.data.extraction import RedditDataExtractor
-
-extractor = RedditDataExtractor("data/raw")
-thread_data = extractor.build_conversation_threads(all_comments)
-context = extractor.get_context_for_comment(comment, thread_data, max_context=5)
-```
-
----
-
-## Performance Benchmarks
-
-**Training (RTX 4090, 2000 comments):**
-- Preprocessing: 5 minutes
-- Training (3 epochs): 2 hours
-- VRAM Usage: ~12GB
-
-**Inference (RTX 4090):**
-- Response time: ~2-3 seconds
-- Throughput: 20-30 tokens/second
-
-**Training (RTX 3060, 1000 comments):**
-- Training (3 epochs): 6 hours
-- VRAM Usage: ~10GB
-
----
-
-## Ethics & Best Practices
-
-1. **Disclose bot identity** - Always make it clear responses are AI-generated
-2. **Follow subreddit rules** - Check if bots are allowed
-3. **Rate limiting** - Don't spam, use appropriate cooldowns
-4. **Content filtering** - Implement safeguards against harmful content
-5. **Privacy** - Don't impersonate real users deceptively
-6. **Monitoring** - Regularly check bot responses for quality
-
----
-
-## License & Credits
-
-This pipeline uses:
-- Transformers (Apache 2.0)
-- PyTorch (BSD)
-- PRAW (BSD)
-- LoRA/QLoRA techniques
-
-Ensure compliance with model licenses (e.g., Llama 3.1 requires Meta approval for commercial use).
-
----
-
-## Support
-
-For issues or questions:
-1. Check troubleshooting section
-2. Review module documentation
-3. Check logs in `logs/reddit_bot.log`
-4. Verify configuration in `config.yaml`
-
----
-
-## Next Steps
-
-1. **Improve quality**: Collect more training data
-2. **Add features**: Context-aware responses, personality tuning
-3. **Deploy at scale**: Use cloud infrastructure
-4. **Monitor performance**: Track response quality over time
+- Every bot reply carries a disclaimer. Do not remove it.
+- Follow the subreddit's rules on bots, and ask first if they are unclear.
+- Blind-evaluation logs contain generated impersonations of real users. They
+  are gitignored; keep them that way.
+- Do not use this to put words in someone's mouth where it could be taken as
+  genuine.

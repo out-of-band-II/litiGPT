@@ -1,515 +1,237 @@
-- [Claude AI Project Context](#claude-ai-project-context)
-  - [Project Overview](#project-overview)
-  - [Project Architecture](#project-architecture)
-    - [Core Pipeline](#core-pipeline)
-    - [Infrastructure](#infrastructure)
-  - [Key Technical Details](#key-technical-details)
-    - [Model Training](#model-training)
-    - [Multi-User System](#multi-user-system)
-    - [Data Format](#data-format)
-  - [File Structure](#file-structure)
-  - [Configuration](#configuration)
-  - [Common Tasks](#common-tasks)
-    - [For Claude: Helping with Code Issues](#for-claude-helping-with-code-issues)
-    - [For Claude: Adding Features](#for-claude-adding-features)
-  - [Code Style \& Patterns](#code-style--patterns)
-    - [Naming Conventions](#naming-conventions)
-    - [Error Handling](#error-handling)
-    - [Logging](#logging)
-    - [Progress Indication](#progress-indication)
-  - [Testing Strategy](#testing-strategy)
-    - [Manual Testing Flow](#manual-testing-flow)
-    - [Multi-User Testing](#multi-user-testing)
-  - [Performance Benchmarks](#performance-benchmarks)
-    - [Training (RTX 4090)](#training-rtx-4090)
-    - [Inference](#inference)
-    - [Memory Usage](#memory-usage)
-  - [Important Design Decisions](#important-design-decisions)
-    - [Why QLoRA?](#why-qlora)
-    - [Why Multiple Users in One Model?](#why-multiple-users-in-one-model)
-    - [Why TF-IDF + Keywords?](#why-tf-idf--keywords)
-    - [Why Separate Training/Bot Containers?](#why-separate-trainingbot-containers)
-  - [Environment Variables](#environment-variables)
-  - [Documentation Files](#documentation-files)
-    - [For Users](#for-users)
-    - [For Developers](#for-developers)
-    - [Templates](#templates)
-  - [Dependencies](#dependencies)
-    - [Core (Required)](#core-required)
-    - [Optional](#optional)
-    - [Cloud](#cloud)
-  - [Known Limitations](#known-limitations)
-  - [Future Enhancements (Not Yet Implemented)](#future-enhancements-not-yet-implemented)
-  - [Getting Help as Claude](#getting-help-as-claude)
-  - [Quick Commands Reference](#quick-commands-reference)
-  - [Project Status](#project-status)
-    - [Completed Features](#completed-features)
-    - [Test Coverage](#test-coverage)
-  - [License \& Ethics](#license--ethics)
-  - [Contact \& Support](#contact--support)
-
-
 # Claude AI Project Context
 
-This file provides context for Claude (or other AI assistants) working on this Reddit Chatbot project.
+Context for Claude (or another AI assistant) working on litiGPT.
 
-## Project Overview
+## What this is
 
-**Reddit Chatbot Pipeline** - A complete, production-ready system for creating Reddit bots that mimic specific users' writing styles using fine-tuned language models.
+litiGPT fine-tunes one QLoRA adapter on a cohort of real Reddit users from an
+Italian subreddit, so that a single model can answer as any of them, and then
+measures whether the personas are actually distinguishable.
 
-**Key Innovation:** One model can learn multiple personalities and automatically select which to use based on conversation context. The system is unified — prompts always include the username, whether training on one user or many.
+The measurement is the point. Loss curves say the adapter fit the data; the
+blind evaluation says whether a human can tell alice from bob. Work that
+improves the first without the second is not obviously progress.
 
-## Project Architecture
+**All prompts are in Italian.** The username is always in the system prompt —
+in training and at inference, with one persona or thirty. There is no
+single-user mode and no `multi_user` flag.
 
-### Core Pipeline
+## Architecture
 
-```
-Data (JSONL) → Extract → Preprocess → Train → Evaluate → Deploy
-                                        ↓
-                                    MLflow Tracking
-```
+Source lives in `litigpt/`, organized by function. Diagrams and the format
+contracts are in [architecture_diagram.md](architecture_diagram.md).
 
-All source code lives in the `litigpt/` package, organized by function:
+- **`data/`** — `preliminary.py` (zstd/jsonl → parquet, run once),
+  `extraction.py` (cohort selection, thread indexing, parent walking),
+  `preprocessing.py` (cleaning, formatting, prompt/completion split)
+- **`training/`** — `trainer.py` (QLoRA, loss masking, target detection),
+  `tracking.py` (MLflow)
+- **`inference/`** — `generator.py`, `classifier.py` (persona selection)
+- **`interface/`** — `gradio_app.py`, `ollama.py`, `blind_eval.py`
+- **`eval/`** — `attribution.py` (TF-IDF + logistic regression authorship)
+- **`deployment/`** — `reddit_bot.py`
+- **`prompts.py`** — the one definition of prompts and thread format
+- **`model_utils.py`** — loading, quantization, dtype detection
+- **`config.py`** — Pydantic schema
+- **`pipeline.py`** — orchestration and every CLI entry point
 
-1. **Data** (`litigpt/data/`):
-   - `extraction.py`: Extract user comments/posts from Reddit JSONL
-   - `preprocessing.py`: Clean, build context, format for training
-   - `preliminary.py`: Raw data conversion utilities (zstd → parquet)
+## Things that have bitten before
 
-2. **Training** (`litigpt/training/`):
-   - `trainer.py`: Fine-tune with QLoRA (4-bit quantization + LoRA adapters)
-   - `tracking.py`: MLflow experiment tracking (logs params, metrics, models)
+These are not hypothetical. Each one shipped, trained or served without error,
+and was found by reading two files side by side.
 
-3. **Inference** (`litigpt/inference/`):
-   - `generator.py`: Generate responses (single-user and multi-user)
-   - `classifier.py`: Deploy-time persona selection (Random, Keywords)
+**LoRA target modules must be detected, not named.** phi-3 fuses q/k/v into
+`qkv_proj` and gate/up into `gate_up_proj`. A hardcoded seven-name Llama list
+matched two, so PEFT adapted `o_proj` and `down_proj`, said nothing, and still
+wrote all seven into `adapter_config.json` — the file on disk disagreed with
+the weights. Nothing reached the attention queries or keys. Leave
+`lora.target_modules` empty; the trainer now raises on a name that matches
+nothing. Verify what an adapter really contains:
 
-4. **Deployment** (`litigpt/deployment/`):
-   - `reddit_bot.py`: Deploy to Reddit (monitors subreddit, auto-selects personality)
-   - `cloud.py`: Cloud deployment (AWS ECS, Google Cloud Run, Kubernetes)
-
-5. **Interface** (`litigpt/interface/`):
-   - `gradio_app.py`: Gradio chat UI
-   - `blind_eval.py`: Blind persona evaluation (guess who the model is impersonating)
-   - `ollama.py`: Ollama-compatible API server
-
-6. **Evaluation** (`litigpt/eval/`):
-   - `attribution.py`: Authorship attribution (TF-IDF + logistic regression);
-     scores persona separation and backs the blind evaluation
-
-7. **Config & Pipeline**:
-   - `litigpt/config.py`: Pydantic configuration models (validated, typed)
-   - `litigpt/pipeline.py`: Orchestrates entire workflow
-
-### Infrastructure
-
-- **Docker**: Separate containers for training (GPU) and deployment (CPU)
-  - `Dockerfile.training`: CUDA + training dependencies
-  - `Dockerfile.bot`: Lightweight inference container
-  - `docker_compose.yaml`: Orchestrates MLflow + Training + Bot
-
-- **Cloud GPU Training**: Google Colab & Kaggle templates
-  - `colab_training.ipynb`: 13-cell complete pipeline
-  - `kaggle_training.py`: All-in-one Kaggle script
-
-## Key Technical Details
-
-### Model Training
-- **Technique**: QLoRA (4-bit quantization + LoRA adapters)
-- **Base Models**: Llama 3.1 8B (default), Mistral 7B, Phi-3
-- **LoRA Config**: r=16, alpha=32, targets all attention layers
-- **Hardware**: Minimum 12GB VRAM (RTX 3060, T4)
-- **Training Time**: 2-3 hours for 2000 comments on RTX 4090
-
-### Multi-User System
-**Training**: Each example includes username in system prompt (in Italian, since the bot targets an Italian subreddit)
-```python
-System: "Sei alice, un utente di Reddit. Rispondi nello stile e nel tono di scrittura di alice."
-User: [context]
-Assistant: [alice's response]
+```bash
+python -c "import safetensors.torch as st; t=st.load_file('adapter_model.safetensors'); print(sorted({k.split('.')[-3] for k in t}))"
 ```
 
-**Inference**: Classifier selects user, then generates with that user's prompt
-```
-Context → Classifier → "alice" → Generate as alice → Response
-```
+**Loss must be masked to the reply.** Scoring the whole templated example
+trains the model to reproduce the system prompt and the parent comments. The
+reply was 33 of 231 tokens in one measurement, so 86% of the signal went to
+text the model gets for free at inference. The dataset is split into
+`prompt`/`completion` so TRL masks it. A knock-on: an example whose prompt
+fills `max_seq_length` has nothing left to learn from, hence
+`drop_unlearnable` and the move to 1024.
 
-**Classification Methods:**
-1. **TF-IDF**: Vectorizes context, compares to user profiles (cosine similarity)
-2. **Keywords**: Matches topics to predefined user keywords
-3. **Hybrid**: Keyword match if available, else TF-IDF
+**The thread format is defined once.** `litigpt/prompts.py::render_thread`.
+Every copy drifted — Gradio labelled turns "assistant", Ollama labelled both
+sides "user"/"assistant", the Reddit bot emitted `Post: {title}` — English
+labels that appear nowhere in training data built from real usernames. Feeding
+the model a shape it never saw degrades output and raises nothing.
+`tests/test_prompts.py::TestNoSecondImplementation` guards this by reading
+source. **Add any new thread-rendering module to its `MODULES` list.**
 
-### Data Format
-**Input**: Reddit JSONL exports
-- `comments.jsonl`: All subreddit comments
-- `submissions.jsonl`: All posts
+**Both of the above fail silently.** Loss falls, checkpoints save, eval curves
+look healthy. When a fine-tune produces fluent output that does not answer the
+question, check the mask and the adapted modules before blaming model size.
 
-**Training Format**: ChatML
-```json
-{
-  "messages": [
-    {"role": "system", "content": "You are alice..."},
-    {"role": "user", "content": "Context with 3-5 parent comments"},
-    {"role": "assistant", "content": "User's actual response"}
-  ]
-}
-```
+## Persona selection is deliberately not learned
 
-## File Structure
+`inference/classifier.py` has a `UserSelector` protocol, `RandomUserSelector`,
+and `KeywordUserSelector`. That is all of it, by design.
 
-```
-reddit-chatbot/
-├── data/
-│   ├── raw/                    # Input JSONL files
-│   ├── processed/              # Extracted user data
-│   └── training/               # Formatted for training
-├── models/
-│   ├── reddit_bot_lora/        # LoRA adapters
-│   └── user_classifier.pkl     # Multi-user classifier
-├── litigpt/                    # Main package
-│   ├── data/                   # Extraction & preprocessing
-│   ├── training/               # Fine-tuning & MLflow tracking
-│   ├── inference/              # Generation & classification
-│   ├── deployment/             # Reddit bot & cloud deployment
-│   ├── interface/              # Gradio, blind eval & Ollama chat UIs
-│   ├── eval/                   # Authorship attribution & persona scoring
-│   ├── config.py               # Configuration setup
-│   └── pipeline.py             # Pipeline orchestrator
-├── launch_chat.py              # Quick-launch script
-├── Dockerfile.training
-├── Dockerfile.bot
-├── docker_compose.yaml
-├── config.yaml
-└── .env                        # Secrets (not committed)
-```
+There is no TF-IDF router, no `HybridUserSelector`, no `UserClassifier`, and no
+`models/user_classifier.pkl`. Documentation used to describe all four at
+length; none ever existed. The only TF-IDF in the project is
+`eval/attribution.py`, which *measures* persona separation for the blind
+evaluation — it does not route.
+
+To add a strategy: one class implementing
+`select_user(context, available_users) -> Optional[str]`, returning `None` to
+fall back to `DEFAULT_USERNAME`; then a branch in `pipeline.run_deployment`
+and a `user_classification.strategy` value. The likely next one reads an
+explicit request out of a mention ("answer as tommyrugby").
 
 ## Configuration
 
-Configuration is validated via Pydantic models defined in `litigpt/config.py`.
-Load with `Config.from_yaml("config.yaml")` — provides autocomplete, validation,
-and typed attribute access (`config.data.target_usernames`).
+Pydantic models in `config.py`. Load with `Config.from_yaml(path)`.
 
-There is no separate `multi_user` flag. The system is unified: prompts always
-include the username. Single-user is just `target_usernames` with one entry.
+| File | Use |
+|---|---|
+| `config.default.yaml` | annotated template, every key; ships in the container |
+| `config.top30.yaml` | the real 30-persona run, reasoning written out per value |
+| `config.smoke.yaml` | tiny end-to-end rehearsal |
+| `config.runpod.yaml` | top30 with `/workspace` paths |
+| `config.yaml` | user-specific, gitignored |
 
-```yaml
-data:
-  target_usernames:
-    - "alice_tech"
-    - "bob_gaming"
-    - "charlie_fitness"
+**Keys absent from `config.py` are ignored silently.** A typo in YAML is
+invisible. When adding a config value, add it to the Pydantic model first.
 
-bot:
-  available_users: ["alice_tech", "bob_gaming", "charlie_fitness"]
-```
+## Common tasks
 
-## Common Tasks
+**Debugging a training run:** confirm the dataset exists and validates
+(`scripts/validate_dataset.py --config ...`), confirm GPU availability,
+confirm the adapter's real modules, confirm the loss mask. Then look at the
+MLflow SQLite DB rather than the training log — Python block-buffers stdout
+when redirected, so loss lines do not reach the file live.
 
-### For Claude: Helping with Code Issues
+**Adding a base model:** test the chat template first, then adjust
+`batch_size`. `DEFAULT_BASE_MODEL` in `model_utils.py` is
+`microsoft/phi-3-mini-4k-instruct`; it was a gated Llama repo, which meant an
+auth failure for anyone who launched an interface without `--base-model`.
 
-**Module Dependencies:**
-- `data.extraction` → `data.preprocessing` → `training.trainer`
-- `inference.classifier` (standalone, uses processed data)
-- `deployment.reddit_bot` uses `inference.generator` & `inference.classifier`
+**Adding an interface:** import from `prompts.py`. Do not rebuild the prompt
+or thread format. Add the module to the test guard.
 
-**When debugging:**
-1. Verify data exists and is formatted correctly
-2. Ensure GPU availability for training
-3. Check system prompts include username
-4. Validate config loads: `Config.from_yaml("config.yaml")`
+## Style
 
-**Common Issues:**
-- OOM: Reduce batch_size, max_seq_length
-- Poor quality: More training data (500+ comments)
-- Wrong user selected: Retrain classifier, add keywords
-- Bot not responding: Check Reddit credentials, rate limits
+- Classes PascalCase, functions and modules snake_case
+- `logging`, not `print`, in library code; `tqdm` for progress
+- Catch specific exceptions, log with context, degrade or re-raise
+- Comments explain why, especially where a value was chosen empirically —
+  `config.top30.yaml` is the model for this
 
-### For Claude: Adding Features
-
-**To add a new user selection method:**
-1. Create new class in `litigpt/inference/classifier.py`
-2. Implement `predict_user(context) -> str` method
-3. Update `HybridUserSelector` to include it
-4. Add config option in `config.yaml`
-
-**To add a new deployment target:**
-1. Add deployment class in `litigpt/deployment/cloud.py`
-2. Follow pattern: `create_*`, `deploy_*` methods
-3. Add example in `deployment_guide.md`
-
-**To support a new base model:**
-1. Add to `config.yaml` model options
-2. Test chat template compatibility
-3. Adjust batch_size if different memory requirements
-4. Update README with performance benchmarks
-
-## Code Style & Patterns
-
-### Naming Conventions
-- **Classes**: PascalCase (`RedditDataExtractor`)
-- **Functions**: snake_case (`extract_user_data`)
-- **Packages**: snake_case organized by function (`litigpt/data/extraction.py`)
-- **Config keys**: snake_case nested dicts
-
-### Error Handling
-```python
-try:
-    # Operation
-except SpecificException as e:
-    logging.error(f"Context: {e}")
-    # Graceful degradation or re-raise
-```
-
-### Logging
-```python
-import logging
-logging.info("✓ Success message")
-logging.warning("⚠️ Warning message")
-logging.error("❌ Error message")
-```
-
-### Progress Indication
-```python
-from tqdm import tqdm
-for item in tqdm(items, desc="Processing"):
-    # work
-```
-
-## Testing Strategy
-
-### Manual Testing Flow
-1. **Small dataset** (100 comments) → Full pipeline
-2. **Validate** each module output
-3. **Test inference** interactively
-4. **Deploy locally** first
-5. **Scale up** to full dataset
-
-### Multi-User Testing
-```python
-# Test extraction
-users_data = extractor.extract_multiple_users(['user1', 'user2'])
-
-# Test classifier
-classifier = build_user_classifier_from_data('data/processed')
-results = classifier.classify_context("test context", top_k=3)
-
-# Test inference
-bot.interactive_mode(available_users=['user1', 'user2'])
-```
-
-## Performance Benchmarks
-
-### Training (RTX 4090)
-- 500 comments: 30-45 min
-- 1000 comments: 1-1.5 hours
-- 2000 comments: 2-3 hours
-- 5000 comments: 5-7 hours
-
-### Inference
-- Model loading: ~5 seconds
-- Response generation: 2-3 seconds
-- With classifier: +10ms overhead
-- Throughput: 20-30 tokens/second
-
-### Memory Usage
-- Training: 12GB VRAM minimum
-- Inference: 6-8GB VRAM (4-bit) or 4GB RAM (CPU)
-- Bot deployment: ~4GB RAM
-
-## Important Design Decisions
-
-### Why QLoRA?
-- **Efficient**: 4-bit quantization reduces memory by 75%
-- **Effective**: Minimal quality loss vs full fine-tuning
-- **Accessible**: Works on consumer GPUs (RTX 3060+)
-
-### Why Multiple Users in One Model?
-- **Efficient**: Single model vs multiple models
-- **Flexible**: Dynamic personality switching
-- **Practical**: Easier deployment and maintenance
-
-### Why TF-IDF + Keywords?
-- **TF-IDF**: Captures nuanced style/vocabulary
-- **Keywords**: Fast, interpretable, topic-based
-- **Hybrid**: Best of both worlds
-
-### Why Separate Training/Bot Containers?
-- **Training**: Needs GPU, CUDA, large dependencies
-- **Bot**: CPU-only, minimal size, production-ready
-- **Separation**: Faster deploys, lower costs
-
-## Environment Variables
-
-Required in `.env`:
-```bash
-REDDIT_CLIENT_ID=...          # From reddit.com/prefs/apps
-REDDIT_CLIENT_SECRET=...
-REDDIT_USER_AGENT=...
-REDDIT_USERNAME=...           # Bot account
-REDDIT_PASSWORD=...
-MLFLOW_TRACKING_URI=...       # Optional: http://localhost:5000
-```
-
-## Documentation Files
-
-### For Users
-- `README.md`: Complete setup guide
-- `quick_reference.md`: One-page cheat sheet
-- `deployment_guide.md`: Cloud deployment
-- `multi_user_guide.md`: Multi-user setup
-- `colab_kaggle_guide.md`: Colab/Kaggle guide
-- `cloud_training_guide.md`: RunPod GPU training
-- `runpod_guide.md`: Operating and debugging RunPod pods
-- `blind_eval_guide.md`: Blind persona evaluation protocol
-
-### For Developers
-- `ARCHITECTURE.md`: System diagrams
-- `MULTI_USER_SUMMARY.md`: Multi-user tech details
-- `CLAUDE.md`: This file
-
-### Templates
-- `colab_training.ipynb`: Google Colab notebook
-- `kaggle_training.py`: Kaggle script
-- `config.yaml`: Configuration template
-- `.env.example`: Environment template
-
-## Dependencies
-
-### Core (Required)
-- torch ≥2.0.0
-- transformers ≥4.36.0
-- datasets, accelerate, peft, trl, bitsandbytes
-- polars, pyarrow, numpy, jsonlines, scikit-learn
-- pydantic ≥2.0.0, pyyaml
-- praw (Reddit API)
-
-### Optional
-- mlflow (experiment tracking)
-- vllm (faster inference)
-- unsloth (faster training)
-- tensorboard, wandb (monitoring)
-
-### Cloud
-- boto3 (AWS)
-- google-cloud-* (GCP)
-- kubernetes (K8s)
-
-## Known Limitations
-
-1. **Training Data**: Needs 100+ comments per user minimum
-2. **Context**: Limited to 3-5 parent comments (token limits)
-3. **GPU**: Requires 12GB+ VRAM for training
-4. **Reddit API**: Rate limited to 60 requests/minute
-5. **Session Limits**: Colab (12h), Kaggle (9h)
-6. **Model Size**: 10-15GB with adapters
-
-## Future Enhancements (Not Yet Implemented)
-
-- [ ] Real-time learning from new conversations
-- [ ] Sentiment-aware user selection
-- [ ] Multi-subreddit deployment
-- [ ] Web UI for model testing
-- [ ] Automatic hyperparameter tuning
-- [ ] Voice/audio Reddit integration
-- [ ] Cross-platform (Discord, Twitter)
-
-## Getting Help as Claude
-
-When asked about this project:
-
-1. **Check context**: Single-user or multi-user mode?
-2. **Reference correct module**: Map task to package (data/, training/, inference/, deployment/)
-3. **Consider deployment**: Local, Docker, or cloud?
-4. **Check docs**: Point to relevant .md file
-5. **Provide examples**: Use code from existing modules
-6. **Think modular**: Each module is independent
-7. **Consider scale**: Colab for quick, local for production
-
-## Quick Commands Reference
+## Testing
 
 ```bash
-# Full pipeline
-python -m litigpt.pipeline --step all
-
-# Individual steps
-python -m litigpt.pipeline --step extract
-python -m litigpt.pipeline --step preprocess
-python -m litigpt.pipeline --step train
-python -m litigpt.pipeline --step deploy
-
-# Run individual modules directly
-python -m litigpt.training.trainer
-python -m litigpt.inference.classifier
-python -m litigpt.deployment.reddit_bot
-
-# Chat interfaces
-python launch_chat.py --model models/reddit_bot_lora
-python launch_chat.py --interface ollama --model models/reddit_bot_lora
-
-# Docker
-docker-compose --profile training run --rm training
-docker-compose --profile bot up -d bot
-
-# MLflow
-mlflow ui --port 5000
+uv run pytest
 ```
 
-## Project Status
+The suite targets failures that do not announce themselves: a LoRA target list
+matching no module, an interface rebuilding the thread format, a persona name
+leaking into a blind round. Tests that only check things which would already
+have raised are not worth much here.
 
-**Version**: 1.0 (January 2025)
-**Status**: Production-ready
-**Maintenance**: Active
+`TestNoSecondImplementation` inspects source rather than behaviour on purpose —
+the interfaces need a loaded model to exercise, so the guard is against a
+second implementation existing at all.
 
-### Completed Features
-✅ Single-user training and deployment
-✅ Multi-user training and automatic selection
-✅ MLflow experiment tracking
-✅ Docker containerization
-✅ Cloud deployment scripts (AWS, GCP, K8s)
-✅ Free GPU training (Colab, Kaggle)
-✅ Comprehensive documentation
-✅ Ready-to-use templates
+Before any paid GPU run: `bash scripts/wsl_smoke_test.sh`.
 
-### Test Coverage
-- Manual testing: Comprehensive
-- Unit tests: `tests/`, run with `python -m pytest` (needs `pytest`; it is in
-  the `dev` dependency group but not yet in `uv.lock`)
-- Integration tests: Not yet implemented
+## Infrastructure
 
-The suite covers the failures that do not announce themselves — a LoRA target
-list matching no module, an interface rebuilding the thread format its own
-way, a persona name leaking into a blind round. All of these once passed
-review, trained or served without error, and were found only by reading two
-files side by side. Tests that only check things which would already have
-raised are not worth much here.
+Training runs on RunPod. `Dockerfile.runpod` is the pinned image;
+`scripts/runpod_bootstrap.sh` on a stock PyTorch template is the lower-friction
+path. `Dockerfile.training` is the older generic CUDA image and is not what
+current runs use.
 
-`tests/test_prompts.py::TestNoSecondImplementation` inspects source rather
-than behaviour, on purpose: the interfaces need a loaded model to exercise, so
-the guard is against a second implementation existing at all.
+The stock RunPod PyTorch image does not work as shipped. Working combination:
 
-## License & Ethics
+```
+torch 2.11.0+cu128   transformers 4.57.6   trl 0.29.1   peft 0.21.0
+datasets 4.8.5       accelerate 1.15.0     bitsandbytes 0.50.2
+mlflow 3.16.1        torchvision/torchaudio UNINSTALLED
+```
 
-**License**: Open source (specify in LICENSE file)
+- transformers 5.x needs torch ≥2.5; on older torch it silently disables torch
+  and then dies on `NameError: name 'nn' is not defined`
+- the image's torchvision breaks any upgraded torch, surfacing as a misleading
+  "cannot import BloomPreTrainedModel"
+- **MLflow ≥3 refuses a file store.** Use `sqlite:///...`
 
-**Ethics**:
-- Always disclose bot identity
-- Don't impersonate users deceptively
-- Follow subreddit rules
-- Implement rate limiting
-- Add content filters
-- Respect privacy
+**Pods never stop themselves.** A finished job leaves the GPU billing
+indefinitely. `scripts/post_training_watchdog.sh` archives the adapter and
+stops the pod, but needs an API key configured on the pod first. See
+[runpod_guide.md](runpod_guide.md).
 
-## Contact & Support
+Reference run: 30 personas, ~54k examples, phi-3-mini r=32, 3h35m on an RTX
+4090 at $0.74/hr. eval_loss converged at roughly two epochs; a third bought
+0.0014 for about an hour of GPU, which is why configs say 2 with early
+stopping.
 
-For issues:
-1. Check troubleshooting in README
-2. Review relevant guide (DEPLOYMENT, MULTI_USER, etc.)
-3. Check logs: `logs/reddit_bot.log`
-4. Verify configuration: `config.yaml`
-5. Test with small dataset first
+## Documentation
+
+- [readme.md](readme.md) — setup, pipeline, interfaces, troubleshooting
+- [quick_reference.md](quick_reference.md) — one-page command sheet
+- [architecture_diagram.md](architecture_diagram.md) — structure and contracts
+- [cloud_training_guide.md](cloud_training_guide.md) — RunPod training paths
+- [runpod_guide.md](runpod_guide.md) — operating and debugging pods
+- [blind_eval_guide.md](blind_eval_guide.md) — evaluation protocol
+- `CLAUDE.md` — this file
+
+## Environment
+
+```bash
+REDDIT_CLIENT_ID=            # only needed for the bot
+REDDIT_CLIENT_SECRET=
+REDDIT_USER_AGENT=
+REDDIT_USERNAME=
+REDDIT_PASSWORD=
+MLFLOW_TRACKING_URI=         # sqlite:///... ; a file store is rejected
+HF_TOKEN=                    # only for gated bases
+```
+
+## Commands
+
+```bash
+python -m litigpt.pipeline --step {extract|preprocess|train|eval|deploy|all} --config config.top30.yaml
+python -m litigpt.data.preliminary
+python scripts/validate_dataset.py --config config.top30.yaml
+bash scripts/wsl_smoke_test.sh
+
+python launch_chat.py --interface {gradio|ollama|blind} --model models/litigpt_top30_lora/final
+python launch_chat.py --interface blind --oracle        # ceiling, no GPU needed
+
+uv run pytest
+mlflow ui --backend-store-uri sqlite:///$(pwd)/mlflow.db --port 5000
+```
+
+## Known limits
+
+1. ~100+ comments per persona minimum
+2. Context capped at 3–5 parents by the token budget
+3. 12GB+ VRAM to train
+4. Reddit API rate limits
+5. Adapter quality is bounded by how distinguishable the authors are at all —
+   run `--oracle` before reading any score
+
+## Ethics
+
+This reproduces how real, named people write.
+
+- Every bot reply carries a disclaimer; do not remove it
+- Follow subreddit rules on bots
+- Blind-eval logs hold impersonations of real users and are gitignored
+- Do not use this to put words in someone's mouth where it could pass as
+  genuine
 
 ---
 
-**For Claude**: This project is well-structured with clear separation of concerns. Each module is self-contained. When helping users, focus on their specific use case (single vs multi-user, local vs cloud) and point them to the relevant documentation. The codebase is modular and extensible - encourage users to build on existing patterns rather than rewriting core functionality.
-
-**Last Updated**: February 2026
+**Last Updated**: September 2026

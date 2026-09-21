@@ -1,366 +1,168 @@
-# Reddit Chatbot - Complete Architecture
+# litiGPT architecture
 
-## System Overview
+How the pieces fit, and where the format contracts between them live.
+
+---
+
+## Training path
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        TRAINING PIPELINE                         │
-└─────────────────────────────────────────────────────────────────┘
+data/raw/*.parquet
+  litigi_comments.parquet, litigi_submissions.parquet
+        │
+        ▼
+┌───────────────────────────────────────────────────────────┐
+│ litigpt/data/extraction.py                                │
+│                                                           │
+│  pick the cohort      target_usernames, or top_n_users    │
+│  index threads        comments_by_id, posts_by_id         │
+│  walk parents         get_context_for_comment(max=3..5)   │
+└───────────────────────────┬───────────────────────────────┘
+                            │  context items: dicts with
+                            │  author + body/selftext
+                            ▼
+┌───────────────────────────────────────────────────────────┐
+│ litigpt/data/preprocessing.py                             │
+│                                                           │
+│  clean_text           unescape, strip markup, drop quotes │
+│  _format_context  ──▶ render_thread()   ◀── the contract  │
+│  cap per user         max_pairs_per_user                  │
+│  split                prompt / completion, train / val    │
+└───────────────────────────┬───────────────────────────────┘
+                            │  data/training/{train,val}.jsonl
+                            ▼
+┌───────────────────────────────────────────────────────────┐
+│ litigpt/training/trainer.py                               │
+│                                                           │
+│  4-bit base load      bitsandbytes NF4                    │
+│  detect targets       from the model, not a name list     │
+│  drop_unlearnable     prompt fills window -> no reply     │
+│  SFTTrainer           completion-only loss                │
+│  early stopping       patience + threshold on eval_loss   │
+└──────────┬──────────────────────────────┬─────────────────┘
+           │                              │
+           ▼                              ▼
+   models/<name>/final          litigpt/training/tracking.py
+   adapter_model.safetensors     └─▶ MLflow (SQLite backend)
+```
 
-┌──────────────┐     ┌───────────────┐     ┌──────────────┐
-│ Reddit Data  │────▶│   Module 1    │────▶│ Processed    │
-│ (JSONL)      │     │ Extract Users │     │ User Data    │
-│              │     │ - Single      │     │              │
-│ comments.jsonl│     │ - Multiple    │     │ user_*.jsonl │
-│ posts.jsonl  │     └───────────────┘     │ metadata.json│
-└──────────────┘                           └──────┬───────┘
-                                                  │
-                                                  ▼
-                                           ┌──────────────┐
-                                           │   Module 2   │
-                                           │ Preprocess   │
-                                           │ - Clean      │
-                                           │ - Context    │
-                                           │ - Format     │
-                                           └──────┬───────┘
-                                                  │
-                                                  ▼
-                                           ┌──────────────┐
-                                           │ Training     │
-                                           │ Data         │
-                                           │ train.jsonl  │
-                                           │ val.jsonl    │
-                                           └──────┬───────┘
-                                                  │
-                                                  ▼
-┌─────────────┐                            ┌──────────────┐
-│  MLflow     │◀───────────────────────────│   Module 3   │
-│  Tracking   │    Logs metrics,           │   Training   │
-│             │    parameters              │   QLoRA      │
-│  Port 5000  │                            │   Fine-tune  │
-└─────────────┘                            └──────┬───────┘
-                                                  │
-                                                  ▼
-                                           ┌──────────────┐
-                                           │ Trained      │
-                                           │ Model        │
-                                           │ *.safetensors│
-                                           └──────────────┘
+---
 
+## The two contracts
 
-┌─────────────────────────────────────────────────────────────────┐
-│                    USER CLASSIFICATION                           │
-│                    (Multi-User Only)                             │
-└─────────────────────────────────────────────────────────────────┘
+Everything downstream of preprocessing has to agree with it on two things.
+Both are defined once, in [litigpt/prompts.py](litigpt/prompts.py), and both
+have been broken before by a module quietly reimplementing them.
 
-┌──────────────┐                           ┌──────────────┐
-│ Processed    │────────────────────────▶ │  Module 13   │
-│ User Data    │                           │  Classifier  │
-│              │                           │  Builder     │
-│ user_*.jsonl │                           │              │
-└──────────────┘                           └──────┬───────┘
-                                                  │
-                                                  ▼
-                                           ┌──────────────┐
-                                           │ User         │
-                                           │ Classifier   │
-                                           │ Profiles     │
-                                           │ (.pkl)       │
-                                           └──────────────┘
+```
+build_system_prompt(username)
+    "Sei {username}, un utente di Reddit. Rispondi nello stile e nel
+     tono di scrittura di {username}."
 
+    Always names the persona, in training and at inference, including
+    when there is only one. DEFAULT_USERNAME = "anonimo" when there is
+    none to name.
 
-┌─────────────────────────────────────────────────────────────────┐
-│                     INFERENCE PIPELINE                           │
-└─────────────────────────────────────────────────────────────────┘
+render_thread([(speaker, text), ...])
+    "\n".join(f"{speaker}: {text}")
 
-┌──────────────┐
-│ New Reddit   │
-│ Comment      │
-└──────┬───────┘
-       │
-       ▼
-┌──────────────┐
-│ Extract      │
-│ Context      │
-│ (3-5 parents)│
-└──────┬───────┘
-       │
-       ▼
-┌──────────────┐     ┌─────────────────────────────────┐
-│ Multi-User?  │─Yes─▶│ Module 13: User Classifier     │
-│              │     │                                 │
-└──────┬───────┘     │ ┌─────────────────────────┐   │
-       │ No          │ │ TF-IDF Similarity       │   │
-       │             │ │ - Vectorize context     │   │
-       │             │ │ - Compare to profiles   │   │
-       │             │ │ - Rank users           │   │
-       │             │ └───────────┬─────────────┘   │
-       │             │             ▼                 │
-       │             │ ┌─────────────────────────┐   │
-       │             │ │ Keyword Matching        │   │
-       │             │ │ - Check topic words     │   │
-       │             │ │ - Match to users        │   │
-       │             │ └───────────┬─────────────┘   │
-       │             │             ▼                 │
-       │             │ ┌─────────────────────────┐   │
-       │             │ │ Hybrid Selection        │   │
-       │             │ │ - Combine methods       │   │
-       │             │ │ - Apply threshold       │   │
-       │             │ └───────────┬─────────────┘   │
-       │             └─────────────┼─────────────────┘
-       │                           ▼
-       │                    ┌──────────────┐
-       │                    │ Selected User│
-       │                    │ (username)   │
-       │                    └──────┬───────┘
-       │                           │
-       └───────────────────────────┘
-                                   │
-                                   ▼
-                            ┌──────────────┐
-                            │ Build Prompt │
-                            │              │
-                            │ System: You  │
-                            │ are {user}... │
-                            │              │
-                            │ User: {ctx}  │
-                            └──────┬───────┘
-                                   │
-                                   ▼
-                            ┌──────────────┐
-                            │  Module 4    │
-                            │  Inference   │
-                            │              │
-                            │  - Tokenize  │
-                            │  - Generate  │
-                            │  - Decode    │
-                            └──────┬───────┘
-                                   │
-                                   ▼
-                            ┌──────────────┐
-                            │  Response    │
-                            │  (in user's  │
-                            │   style)     │
-                            └──────────────┘
+    Speakers are real Reddit usernames. A post is rendered exactly like
+    a comment -- its author and selftext, no title, no "Post:" label.
+    English role labels appear nowhere in the training data.
+```
 
+`tests/test_prompts.py::TestNoSecondImplementation` reads the source of every
+module that renders threads and fails if one builds the string itself. It
+covers preprocessing, the three interfaces, and the Reddit bot.
 
-┌─────────────────────────────────────────────────────────────────┐
-│                    DEPLOYMENT ARCHITECTURE                       │
-└─────────────────────────────────────────────────────────────────┘
+---
 
-                            ┌──────────────┐
-                            │   Reddit     │
-                            │   Subreddit  │
-                            └──────┬───────┘
-                                   │ Stream comments
-                                   ▼
-                            ┌──────────────┐
-                            │  Module 5    │
-                            │  Bot Monitor │
-                            │              │
-                            │ - Filter     │
-                            │ - Rate limit │
-                            │ - Triggers   │
-                            └──────┬───────┘
-                                   │
-                                   ├─────────────────────┐
-                                   │                     │
-                                   ▼                     ▼
-                            ┌──────────────┐     ┌──────────────┐
-                            │ Should       │     │  Context     │
-                            │ Respond?     │     │  Extraction  │
-                            │              │     │              │
-                            │ - Score      │     │ - Get parents│
-                            │ - Keywords   │     │ - Build thread│
-                            │ - Probability│     └──────┬───────┘
-                            └──────┬───────┘            │
-                                   │ Yes               │
-                                   └───────┬───────────┘
-                                           │
-                                           ▼
-                                    ┌──────────────┐
-                                    │  Inference   │
-                                    │  Pipeline    │
-                                    │  (see above) │
-                                    └──────┬───────┘
-                                           │
-                                           ▼
-                                    ┌──────────────┐
-                                    │  Post Reply  │
-                                    │              │
-                                    │ + Disclaimer │
-                                    │ + Logging    │
-                                    └──────┬───────┘
-                                           │
-                                           ▼
-                                    ┌──────────────┐
-                                    │   Reddit     │
-                                    │   Comment    │
-                                    └──────────────┘
+## Serving path
 
+```
+                    models/<name>/final  +  base model
+                                 │
+                                 ▼
+                   litigpt/model_utils.py
+                   load_model_and_tokenizer
+                     4-bit, dtype detection, PEFT merge
+                                 │
+            ┌────────────────────┼────────────────────┐
+            ▼                    ▼                    ▼
+   interface/gradio_app   interface/ollama    interface/blind_eval
+   chat UI, :7860         Flask + SSE, :5000  guess the persona, :7861
+            │                    │                    │
+            └────────────────────┴────────────────────┘
+                                 │
+                        inference/generator.py
+                        RedditBotInference
+                          build_system_prompt + render_thread
+                          generate, strip, return
+```
 
-┌─────────────────────────────────────────────────────────────────┐
-│                   DOCKER ARCHITECTURE                            │
-└─────────────────────────────────────────────────────────────────┘
+The blind evaluator additionally draws on:
 
-┌─────────────────────────────────────────────────────────────────┐
-│                    Docker Host                                   │
-│                                                                  │
-│  ┌────────────────────────────────────────────────────────┐    │
-│  │               Docker Network (reddit-bot-network)       │    │
-│  │                                                          │    │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐ │    │
-│  │  │   MLflow     │  │   Training   │  │     Bot      │ │    │
-│  │  │   Server     │  │  Container   │  │  Container   │ │    │
-│  │  │              │  │              │  │              │ │    │
-│  │  │  Port 5000   │  │  GPU: Yes    │  │  GPU: No     │ │    │
-│  │  │  Storage:    │  │  Runtime:    │  │  Runtime:    │ │    │
-│  │  │  - mlruns/   │  │  nvidia      │  │  default     │ │    │
-│  │  │  - artifacts/│  │              │  │              │ │    │
-│  │  └──────────────┘  └──────────────┘  └──────────────┘ │    │
-│  │                                                          │    │
-│  └────────────────────────────────────────────────────────┘    │
-│                                                                  │
-│  ┌────────────────────────────────────────────────────────┐    │
-│  │                    Volumes                              │    │
-│  │                                                          │    │
-│  │  ./data        ←→  /workspace/data (Training)          │    │
-│  │  ./models      ←→  /workspace/models (Training)        │    │
-│  │  ./models      ←→  /app/models (Bot)                   │    │
-│  │  ./mlruns      ←→  /mlflow/mlruns (MLflow)            │    │
-│  │  ./logs        ←→  /app/logs (Bot)                     │    │
-│  │  ./.env        ←→  /app/.env (Bot)                     │    │
-│  │  ./config.yaml ←→  /workspace/config.yaml (Training)  │    │
-│  │                                                          │    │
-│  └────────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────────┘
+```
+litigpt/eval/attribution.py
+  AuthorAttributor    word + char TF-IDF -> logistic regression
+                      guesses alongside the human, and scores how far
+                      apart the personas are at all
+```
 
+That is the only TF-IDF in the system, and it measures — it does not route.
 
-┌─────────────────────────────────────────────────────────────────┐
-│                   CLOUD DEPLOYMENT OPTIONS                       │
-└─────────────────────────────────────────────────────────────────┘
+---
 
-Option 1: RunPod (Training)
-┌──────────────────────────┐
-│  RunPod GPU Instance     │
-│  - RTX 4090 (24GB)       │
-│  - Custom Docker Image   │
-│  - Network Volume        │
-│  - SSH Access            │
-│                          │
-│  Cost: $0.50-2.00/hr     │
-└──────────────────────────┘
+## Reddit bot
 
-Option 2: AWS ECS (Bot)
-┌──────────────────────────┐
-│  AWS ECS Fargate         │
-│  - CPU: 512-1024         │
-│  - Memory: 1-2GB         │
-│  - Auto-scaling          │
-│  - CloudWatch logs       │
-│                          │
-│  Cost: $15-30/month      │
-└──────────────────────────┘
+```
+subreddit comment stream (skip_existing, pause_after=-1)
+        │
+        ├── new comment ──▶ should_respond()
+        │                     own comment? deleted? seen? score?
+        │                     trigger keywords? probability? cooldown?
+        │                           │ yes
+        │                           ▼
+        │                   get_comment_context()
+        │                     walk parents, render_thread
+        │                           │
+        │                           ▼
+        │                   select_user_for_context()
+        │                     UserSelector protocol:
+        │                       RandomUserSelector   pick from available
+        │                       KeywordUserSelector  topic -> persona
+        │                       (returns None -> DEFAULT_USERNAME)
+        │                           │
+        │                           ▼
+        │                   generate, append disclaimer, reply
+        │
+        └── stream idle ──▶ poll mentions if due (mention_poll_seconds)
+```
 
-Option 3: Google Cloud Run (Bot)
-┌──────────────────────────┐
-│  Cloud Run Service       │
-│  - Serverless            │
-│  - Auto-scale to 0       │
-│  - Pay per use           │
-│  - Secret Manager        │
-│                          │
-│  Cost: $5-15/month       │
-└──────────────────────────┘
+Persona selection is deliberately not learned. A new strategy is one class
+with `select_user(context, available_users) -> Optional[str]`; the natural
+next one reads an explicit request out of a mention.
 
-Option 4: Kubernetes (Multi-Bot)
-┌──────────────────────────┐
-│  Kubernetes Cluster      │
-│  - Multiple bots         │
-│  - Load balancing        │
-│  - Rolling updates       │
-│  - Persistent volumes    │
-│                          │
-│  Cost: $20-50/month      │
-└──────────────────────────┘
+Entry point is `python -m litigpt.pipeline --step deploy`, which builds all of
+the above from config.
 
+---
 
-┌─────────────────────────────────────────────────────────────────┐
-│                      DATA FLOW                                   │
-└─────────────────────────────────────────────────────────────────┘
+## Where things live
 
-Training Data Flow:
-─────────────────
-JSONL Files → Extract Users → Filter/Clean → Build Context → 
-Format (ChatML) → Train (QLoRA) → Save Model → Log to MLflow
-
-Multi-User Training:
-───────────────────
-JSONL Files → Extract Multiple Users → Create User-Tagged Pairs →
-Format with Username in System Prompt → Train → Build Classifier
-
-Inference Data Flow:
-──────────────────
-Reddit Comment → Extract Context → [Multi-User: Classify User] →
-Build Prompt → Tokenize → Generate → Decode → Post Reply
-
-User Classification:
-──────────────────
-Context → Vectorize (TF-IDF) → Compare to User Profiles →
-Rank by Similarity → Select Top User → Return Username
-
-
-┌─────────────────────────────────────────────────────────────────┐
-│                    MODULE DEPENDENCIES                           │
-└─────────────────────────────────────────────────────────────────┘
-
-Module 1 (Extract)
-     │
-     ├──▶ Module 2 (Preprocess)
-     │        │
-     │        ├──▶ Module 3 (Training)
-     │        │        │
-     │        │        └──▶ Module 8 (MLflow)
-     │        │
-     │        └──▶ Module 13 (Classifier)
-     │
-     └──▶ Module 4 (Inference)
-              │
-              ├──▶ Module 13 (Classifier)
-              │
-              └──▶ Module 5 (Deployment)
-                       │
-                       └──▶ Module 4 (Inference)
-
-Module 6 (Config) ─────▶ All Modules
-Module 7 (Pipeline) ───▶ Orchestrates All
-
-
-┌─────────────────────────────────────────────────────────────────┐
-│                    PERFORMANCE METRICS                           │
-└─────────────────────────────────────────────────────────────────┘
-
-Training (RTX 4090, 2000 comments):
-- Data extraction: ~5 min
-- Preprocessing: ~10 min  
-- Training (3 epochs): ~2 hours
-- VRAM usage: ~12GB
-- Total pipeline: ~2.5 hours
-
-Inference (RTX 4090):
-- Model loading: ~5 sec
-- Response generation: ~2-3 sec
-- With user classification: +10ms
-- Throughput: 20-30 tokens/sec
-
-Bot Deployment:
-- Memory usage: ~4GB RAM
-- CPU usage: <10% idle, ~40% generating
-- Network: <1MB/hour
-- Storage: ~10GB (model + cache)
-
-Multi-User Overhead:
-- Training time: +10% (more data)
-- Model size: Same
-- Inference time: +10ms (classification)
-- Memory: +50MB (classifier profiles)
+| Concern | Module |
+|---|---|
+| Raw conversion (zstd/jsonl → parquet) | `data/preliminary.py` |
+| Cohort selection, thread indexing | `data/extraction.py` |
+| Cleaning, formatting, splitting | `data/preprocessing.py` |
+| Prompt and thread format | `prompts.py` |
+| Model loading, quantization | `model_utils.py` |
+| QLoRA training | `training/trainer.py` |
+| Experiment tracking | `training/tracking.py` |
+| Generation | `inference/generator.py` |
+| Persona selection | `inference/classifier.py` |
+| Authorship scoring | `eval/attribution.py` |
+| Chat, streaming, blind eval | `interface/` |
+| Reddit bot | `deployment/reddit_bot.py` |
+| Config schema | `config.py` |
+| Orchestration and every CLI entry point | `pipeline.py` |
