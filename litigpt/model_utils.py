@@ -106,6 +106,7 @@ def load_model_and_tokenizer(
     adapter_path: Optional[str] = None,
     load_in_4bit: bool = True,
     for_training: bool = False,
+    trust_remote_code: bool = False,
 ) -> Tuple[AutoModelForCausalLM, AutoTokenizer, torch.dtype]:
     """
     Load a model and tokenizer with optional quantization and LoRA adapters.
@@ -164,7 +165,14 @@ def load_model_and_tokenizer(
         quantization_config=bnb_config,
         device_map=device_map,
         dtype=compute_dtype,
-        trust_remote_code=True,
+        # Default False so transformers uses its own maintained implementation.
+        # A model repo's bundled modeling_*.py is frozen at whatever transformers
+        # API existed when it was uploaded: phi-3's calls the DynamicCache
+        # attribute `seen_tokens`, removed in newer transformers, and generation
+        # dies with "'DynamicCache' object has no attribute 'seen_tokens'".
+        # The native implementation tracks the current cache API. Pass True only
+        # for an architecture transformers does not support natively.
+        trust_remote_code=trust_remote_code,
     )
 
     if for_training:
