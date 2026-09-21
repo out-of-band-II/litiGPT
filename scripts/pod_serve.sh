@@ -34,7 +34,12 @@ MODE="${1:-blind}"
 shift || true
 
 REPO="${LITIGPT_REPO:-/workspace/litiGPT}"
-PORT="${LITIGPT_PORT:-7861}"
+# 7870 by default, deliberately not 7860. RunPod's nginx proxies each exposed
+# HTTP port to the port below it, so an app on 7860 is automatically reachable
+# at https://<POD_ID>-7861.proxy.runpod.net — public, to anyone with the URL.
+# 7870 is untouched by nginx, so the app is reachable only through an SSH
+# tunnel. To publish deliberately: LITIGPT_PORT=7860 plus --auth.
+PORT="${LITIGPT_PORT:-7870}"
 HOST="${LITIGPT_HOST:-127.0.0.1}"
 ADAPTER="${LITIGPT_ADAPTER:-$REPO/models/litigpt_top30_lora}"
 BASE_MODEL="${LITIGPT_BASE_MODEL:-microsoft/phi-3-mini-4k-instruct}"
@@ -43,6 +48,20 @@ CONFIG="${LITIGPT_CONFIG:-config.top30.yaml}"
 RUN_DIR=/workspace/serve
 PID_FILE=$RUN_DIR/app.pid
 LOG_FILE=$RUN_DIR/app.log
+
+# Newer RunPod images ship Ubuntu 24.04, where PEP 668 blocks pip from
+# installing into the system interpreter. The dependencies therefore live in a
+# venv built with --system-site-packages, so it inherits the image's CUDA torch
+# rather than pulling 2.5GB of it again. Plain `python` there is the system
+# interpreter and has none of them, so prefer the venv when it exists.
+PYTHON="${LITIGPT_PYTHON:-}"
+if [ -z "$PYTHON" ]; then
+    if [ -x /workspace/venv/bin/python ]; then
+        PYTHON=/workspace/venv/bin/python
+    else
+        PYTHON=python
+    fi
+fi
 
 mkdir -p "$RUN_DIR"
 
@@ -87,7 +106,7 @@ export TOKENIZERS_PARALLELISM=false
 
 case "$MODE" in
     blind)
-        APP=(python -u -m litigpt.interface.blind_eval
+        APP=("$PYTHON" -u -m litigpt.interface.blind_eval
              --model "$ADAPTER"
              --base-model "$BASE_MODEL"
              --config "$CONFIG"
@@ -95,13 +114,13 @@ case "$MODE" in
         ;;
     oracle)
         # Control condition: no model is loaded at all.
-        APP=(python -u -m litigpt.interface.blind_eval
+        APP=("$PYTHON" -u -m litigpt.interface.blind_eval
              --oracle
              --config "$CONFIG"
              --host "$HOST" --port "$PORT")
         ;;
     chat)
-        APP=(python -u -m litigpt.interface.gradio_app
+        APP=("$PYTHON" -u -m litigpt.interface.gradio_app
              --model "$ADAPTER"
              --base-model "$BASE_MODEL"
              --config "$CONFIG"
@@ -121,6 +140,7 @@ fi
 # -u keeps the log readable live. Without it Python block-buffers stdout when
 # it is redirected, and nothing appears until the process exits.
 echo "Starting: ${APP[*]} $*"
+echo "Interpreter: $PYTHON"
 setsid nohup "${APP[@]}" "$@" > "$LOG_FILE" 2>&1 < /dev/null &
 APP_PID=$!
 echo "$APP_PID" > "$PID_FILE"
@@ -135,7 +155,13 @@ for _ in $(seq 1 180); do
         rm -f "$PID_FILE"
         exit 1
     fi
-    if curl -fsS -o /dev/null "http://127.0.0.1:$PORT/" 2>/dev/null; then
+    # Confirm OUR process owns the socket, not merely that something answers.
+    # RunPod images run an nginx that listens on each exposed HTTP port and
+    # proxies it to the port below (7861 -> 7860, 8081 -> 8080, and so on), so
+    # a plain curl to the port returns 200 from nginx while our app is still
+    # loading the model — and then our app dies on EADDRINUSE.
+    if ss -ltnp 2>/dev/null | grep -q "pid=$APP_PID," \
+       || curl -fsS "http://127.0.0.1:$PORT/" 2>/dev/null | grep -qi "gradio"; then
         echo "Up."
         if [ "$HOST" = "0.0.0.0" ]; then
             echo "Public (if $PORT is an exposed HTTP port):"
