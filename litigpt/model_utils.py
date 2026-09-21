@@ -17,7 +17,11 @@ from peft import PeftModel
 logger = logging.getLogger(__name__)
 
 DEFAULT_USERNAME = "anonimo"
-DEFAULT_BASE_MODEL = "meta-llama/Llama-3.1-8B-Instruct"
+# The base every config in this repo actually trains against. It used to be
+# meta-llama/Llama-3.1-8B-Instruct, which is a gated repo: anyone who launched
+# an interface without --base-model got an auth failure from Hugging Face
+# rather than the adapter they just trained.
+DEFAULT_BASE_MODEL = "microsoft/phi-3-mini-4k-instruct"
 
 
 def _detect_compute_dtype() -> Tuple[torch.dtype, bool]:

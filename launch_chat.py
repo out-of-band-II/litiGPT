@@ -151,7 +151,7 @@ Examples:
     parser.add_argument(
         "--base-model",
         default=DEFAULT_BASE_MODEL,
-        help="Base model identifier (default: Llama-3.1-8B)"
+        help=f"Base model identifier (default: {DEFAULT_BASE_MODEL})"
     )
 
     parser.add_argument(
