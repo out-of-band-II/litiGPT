@@ -110,6 +110,10 @@ why the number matters more than you would expect.
 
 ## 4. SSH, and why per-pod keys matter
 
+> New to SSH? **[Appendix A](#appendix-a-ssh-from-first-principles)** explains
+> keypairs, `known_hosts`, `~/.ssh/config`, tunnels and how to read the error
+> messages. This section assumes it.
+
 By default `startSsh: true` injects **your account's registered keys** into
 every pod. If you run more than one project on one RunPod account, every pod
 accepts the same key, and an alias pointed at the wrong pod does not fail —
@@ -490,3 +494,303 @@ ssh litigpt-pod "tail -f /workspace/serve/app.log"
 tar czf - -C /workspace/litiGPT/models/litigpt_top30_lora/final . \
   | tar xzf - --no-same-owner -C ./models/litigpt_top30_lora/final
 ```
+
+---
+
+# Appendix A: SSH from first principles
+
+Everything above leans on SSH. If you have been copying the commands without a
+clear picture of what they do, this appendix is the picture. It is written for
+someone who has never set up a key.
+
+## What SSH is
+
+SSH — Secure Shell — gives you a shell on a machine somewhere else. You type,
+the remote machine runs it, you see the output. That is the whole idea, and it
+predates the cloud entirely.
+
+The *Secure* is the point. Its predecessor, telnet, sent everything as plain
+text across the network, including your password. SSH encrypts the channel, so
+anyone sitting between you and the pod sees only ciphertext.
+
+But encryption alone is not enough. An encrypted channel to an imposter is
+still a channel to an imposter. So SSH authenticates **both ends**:
+
+- the **server** proves to you that it is the machine you meant to reach
+- **you** prove to the server that you are allowed in
+
+Those are two separate mechanisms, they fail with two different error
+messages, and confusing them is the single biggest source of SSH frustration.
+
+## Why keys instead of a password
+
+A password is a shared secret: you know it, the server knows it, and you send
+it over on every login. That means the server stores something that can be
+stolen, and a machine that can impersonate the server can harvest it.
+
+Key authentication removes the sharing. You generate a **keypair** — two files
+that are mathematically linked:
+
+| File | Name | Where it goes | Secrecy |
+|---|---|---|---|
+| `id_litigpt` | private key | stays on your laptop, always | never leaves, never copied |
+| `id_litigpt.pub` | public key | copied onto every server you want to enter | harmless to publish |
+
+The asymmetry is the trick. The public key can *verify* a signature but cannot
+*produce* one. So the server can hold your public key, check that you possess
+the matching private key, and still learn nothing that would let it — or
+anyone who steals its disk — log in as you elsewhere.
+
+**Your private key never crosses the network.** Not on setup, not on login,
+not ever. If some tool asks you to paste a private key somewhere, that is
+wrong.
+
+## What actually happens when you connect
+
+Roughly, in order:
+
+1. **Key exchange.** The two sides agree on a shared session secret using
+   Diffie-Hellman, without ever transmitting it. Everything after this point
+   is encrypted.
+2. **Server authentication.** The server signs a value with its *host key* and
+   sends the signature. Your client checks it against `~/.ssh/known_hosts`.
+   This is where "authenticity of host ... can't be established" comes from.
+3. **Your authentication.** Your client offers a public key. The server looks
+   for it in `~/.ssh/authorized_keys` on the account you are logging into. If
+   it is there, the server sends a challenge; your client signs it with the
+   private key; the server verifies with the public key.
+4. **Shell.** You get a prompt.
+
+On RunPod, step 3's `authorized_keys` is populated for you: whatever you put
+in the pod's `PUBLIC_KEY` environment variable at creation is written there
+when the container starts. That is why the variable only works at creation
+time, and why retrofitting a key means recreating the pod.
+
+## Host keys, `known_hosts`, and the scary warning
+
+Host keys are the *server proving itself to you*, which is the direction
+people forget exists.
+
+The first time you connect, your client has never seen this machine and asks:
+
+```
+The authenticity of host '[38.65.239.38]:19226' can't be established.
+ED25519 key fingerprint is SHA256:xxxx...
+Are you sure you want to continue connecting (yes/no)?
+```
+
+Saying yes records the fingerprint in `~/.ssh/known_hosts`. On every later
+connection the client compares silently. If it ever differs, you get:
+
+```
+WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!
+```
+
+In general that means something is impersonating the server. **On RunPod it
+usually means something mundane**: pods are reached through shared IP and port
+combinations, and the one you were given has been recycled to a different
+machine. When you have just terminated a pod and created a new one, this is
+expected. Remove the stale entry and reconnect:
+
+```bash
+ssh-keygen -R '[38.65.239.38]:19226'
+```
+
+Do that only when you *know* why the key changed. On a machine that should
+have been stable, treat the warning as real.
+
+## Where everything lives
+
+All of it is in `~/.ssh/`, which on your Windows box is
+`C:\Users\rubio\.ssh\`:
+
+| File | What it is |
+|---|---|
+| `id_litigpt` | a private key — this project's |
+| `id_litigpt.pub` | the matching public key |
+| `known_hosts` | fingerprints of servers you have accepted |
+| `config` | nicknames and per-host settings |
+| `authorized_keys` | *on the server*: public keys allowed to log in |
+
+Permissions matter. On Linux, SSH refuses to use a private key that other
+users can read — it will error rather than silently proceed, which is correct
+behaviour and surprises everyone once. Windows OpenSSH does the equivalent
+check against NTFS ACLs; if you ever copy a key in and get a permissions
+complaint, `icacls` is the fix, not `chmod`.
+
+## `~/.ssh/config`: giving machines names
+
+Without it, every command is a pile of flags:
+
+```bash
+ssh -i ~/.ssh/id_litigpt -p 19226 root@38.65.239.38
+```
+
+With it, the same connection is `ssh litigpt-pod`. This project's entry:
+
+```
+Host litigpt-pod
+    HostName 38.65.239.38
+    User root
+    Port 19226
+    IdentityFile ~/.ssh/id_litigpt
+    IdentitiesOnly yes
+```
+
+Line by line:
+
+- **`Host`** — the nickname you type. Purely local; it means nothing to the
+  server.
+- **`HostName`** — the real address it expands to.
+- **`User`** — who to log in as. RunPod containers run as `root`.
+- **`Port`** — SSH defaults to 22, but RunPod maps your pod's 22 to a
+  high-numbered port on a shared host, so this is almost never 22.
+- **`IdentityFile`** — which private key to use.
+- **`IdentitiesOnly yes`** — *only* that key. Without it, your client offers
+  every key it has, one at a time, and servers commonly cut you off after five
+  failures — so you can be locked out while holding the correct key, simply
+  because it was offered sixth. Always set this.
+
+`HostName` and `Port` change every time a pod is recreated. `scp`, `rsync`,
+`git` over SSH and `-L` tunnels all read this file, so one edit fixes
+everything at once.
+
+Two entries can point at the same machine — this project uses `litigpt-pod`
+and `litigpt-eval` — which is convenient and is also exactly how the alias
+accident described in section 4 happens. Keep a project's name in its alias.
+
+## The agent
+
+`ssh-agent` is a background process that holds unlocked private keys, so a
+passphrase-protected key does not prompt you on every single connection. On
+Windows it is a service you can start once:
+
+```powershell
+Get-Service ssh-agent | Set-Service -StartupType Automatic
+Start-Service ssh-agent
+ssh-add $env:USERPROFILE\.ssh\id_litigpt
+```
+
+The keys in this project have no passphrase, so you do not need the agent at
+all. It matters the moment you add one — which you should, for any key that
+guards something you care about.
+
+## Moving files
+
+Same authentication, different front end:
+
+```bash
+scp file.txt litigpt-pod:/workspace/          # push one file
+scp litigpt-pod:/workspace/out.json .         # pull one file
+scp -r localdir litigpt-pod:/workspace/       # push a directory
+```
+
+`scp` is fine for one or two files. It has two limits worth knowing:
+
+- It does **not** expand shell braces remotely — `{a,b,c}` arrives as a
+  literal filename and fails. That bit this project.
+- It restarts from zero if interrupted.
+
+For many files, pipe `tar` through SSH instead. SSH is just a pipe, so
+anything that reads and writes streams works over it:
+
+```bash
+ssh litigpt-pod 'tar czf - -C /workspace/litiGPT/models final' \
+  | tar xzf - --no-same-owner -C ./models/litigpt_top30_lora
+```
+
+`--no-same-owner` matters: the archive records root's uid, your Windows user
+is not root, and without the flag every file errors on ownership.
+
+For anything large or resumable, `rsync -avP` over the same alias beats both.
+
+## Port forwarding, the part that looks like magic
+
+This is how you reached the Gradio UI, and it is worth understanding properly
+rather than pattern-matching.
+
+```bash
+ssh -N -L 7870:localhost:7870 litigpt-pod
+```
+
+Read `-L A:B:C` as: **open port A on my machine; anything that connects to it
+comes out of the SSH connection and is delivered to B:C, resolved from the
+remote machine's point of view.**
+
+So, step by step:
+
+1. Your laptop starts listening on port 7870.
+2. Your browser connects to `http://localhost:7870`.
+3. Those bytes travel the encrypted SSH connection to the pod's SSH daemon.
+4. The daemon opens a fresh connection to `localhost:7870` — **`localhost`
+   here means the pod**, not you. That is the part that trips people up.
+5. Gradio answers, and the bytes come back the same way.
+
+Why that is the right tool here: the app binds to `127.0.0.1` on the pod, so
+the pod's own firewall and the internet cannot reach it at all. The only door
+is the tunnel, and the tunnel is guarded by your SSH key. No password on the
+app, no public URL, nothing to leak.
+
+The two flags:
+
+- **`-N`** — do not run a remote command. Without it you also get an
+  interactive shell, and closing it kills the tunnel. `-N` says the forwarding
+  *is* the job.
+- **`-o ExitOnForwardFailure=yes`** — if local port 7870 is already taken, SSH
+  would otherwise connect happily and just not forward anything, leaving you
+  staring at a browser error with a session that looks healthy. This makes it
+  fail loudly.
+
+Add `-o ServerAliveInterval=30` for long-lived tunnels; it sends a keepalive
+so an idle NAT or firewall does not quietly drop the connection.
+
+The mirror image is `-R` (remote forwarding), which opens a port on the
+*server* that reaches back to your machine. You have not needed it here.
+
+## Reading failures
+
+Add `-v` for a running commentary, `-vvv` for more than you want:
+
+```bash
+ssh -v litigpt-pod
+```
+
+The useful lines are `debug1: Offering public key:` (which key was tried) and
+`debug1: Authentications that can continue:` (what the server will accept).
+
+| Message | What it means | Where to look |
+|---|---|---|
+| `Connection timed out` | Nothing answered. Pod stopped, or wrong IP/port. | Is it running? Re-read the address from the console. |
+| `Connection refused` | The machine answered but nothing is listening on that port. | Usually the wrong port, or sshd not started. |
+| `Permission denied (publickey)` | You reached the right sshd; your key is not in its `authorized_keys`. | Wrong `IdentityFile`, or the pod was made without your `PUBLIC_KEY`. |
+| `REMOTE HOST IDENTIFICATION HAS CHANGED` | Host key differs from `known_hosts`. | Expected after recreating a pod; `ssh-keygen -R`. |
+| `Too many authentication failures` | Agent offered too many keys before the right one. | Set `IdentitiesOnly yes`. |
+| `Bad owner or permissions` | Key file is too readable. | `chmod 600`, or `icacls` on Windows. |
+
+The distinction that saves the most time: **`Permission denied` means you got
+all the way to the right server.** The network is fine, the address is right,
+the pod is up. It is purely about which key was offered. `timed out` and
+`refused` are the opposite — you never got there at all.
+
+## Flags used in this guide
+
+| Flag | Meaning |
+|---|---|
+| `-i <file>` | Use this private key. |
+| `-p <port>` | Connect to this port (note: `scp` uses capital `-P`). |
+| `-N` | No remote command; forwarding only. |
+| `-L a:h:p` | Local port forward, described above. |
+| `-o BatchMode=yes` | Never prompt for anything; fail instead. Correct for scripts and automation, which is why it appears throughout this project. |
+| `-o ExitOnForwardFailure=yes` | Fail if a tunnel cannot be established. |
+| `-o ServerAliveInterval=30` | Keepalive every 30s for long-lived connections. |
+| `-v` / `-vvv` | Increasing verbosity when something is wrong. |
+
+## The three habits worth keeping
+
+1. **One key per project, never the account-wide one.** A misdirected alias
+   then fails with `Permission denied` instead of succeeding on the wrong
+   machine. Section 4 covers the setup.
+2. **Verify identity after connecting**, before running anything that writes:
+   `ssh litigpt-pod "hostname; ls -d /workspace/litiGPT"`.
+3. **Prefer a tunnel to a public port.** It costs one extra terminal and
+   removes the entire question of who else can reach your app.
