@@ -8,12 +8,18 @@
 
 data:
   raw_dir: "/workspace/data/raw"
-  submission_filename: "litigi_submissions.jsonl"
+  submission_filename: "litigi_submissions.parquet"
   comments_filename: "litigi_comments.parquet"
   processed_dir: "/workspace/data/processed"
   training_dir: "/workspace/data/training"
-  target_usernames:
-    - "tommyrugby"
+  # Same 30-persona cohort as config.top30.yaml, selected automatically so it
+  # stays reproducible from the raw dump. This file differs from that one only
+  # in its paths.
+  target_usernames: []
+  top_n_users: 30
+  max_pairs_per_user: 2000
+  exclude_authors: ["[deleted]", "[removed]", "AutoModerator"]
+  strip_quoted_text: true
   min_comment_length: 10
   max_comment_length: 512
   min_score: 1
@@ -28,22 +34,42 @@ model:
   output_dir: "/workspace/models/reddit_bot_lora"
 
 training:
-  num_epochs: 3
-  # Sized for a 24GB card (RTX 4090 / A5000) at max_seq_length 512.
-  # On a 48GB A40 you can raise batch_size to 16 and drop grad accumulation to 2.
-  batch_size: 8
-  gradient_accumulation_steps: 4
-  learning_rate: 2.0e-4
-  max_seq_length: 512
+  # 2, not 3. The first top-30 run evaluated every 500 steps and eval_loss went
+  # 2.2431 -> 1.9648 (step 3500) -> 1.9634 (step 5000, the end). It converged
+  # at roughly two epochs; the last 1552 steps bought 0.0014 for about an hour
+  # of rented GPU. Early stopping below is the safety net.
+  num_epochs: 2
+  # 4 x 8 keeps the effective batch at 32 while halving peak activation memory,
+  # which matters because max_seq_length has doubled. Sized for a 24GB card
+  # (RTX 4090 / A5000); only ~7.7GB was in use on the first run, so there is
+  # headroom to raise this if nvidia-smi agrees mid-run.
+  batch_size: 4
+  gradient_accumulation_steps: 8
+  # Halved from 2e-4: detected target_modules raise trainable parameters from
+  # 17.8M to 50.3M, and holding the rate while tripling capacity is how an
+  # adapter overwrites instruction-following instead of layering a voice on it.
+  learning_rate: 1.0e-4
+  # Loss is masked to the reply, so an example whose prompt alone fills the
+  # window has nothing to learn from. At 512 that was 4.5% of the set.
+  max_seq_length: 1024
   warmup_ratio: 0.05
   train_ratio: 0.9
   # Sequence lengths here are very uneven (median 164 tok, p95 502).
   # Grouping by length cuts padding waste from ~103% to near zero.
   group_by_length: true
+  # The val split is ~6k examples; at the default eval_steps of 50 that is
+  # ~100 evaluations and about two extra hours.
+  eval_steps: 500
+  save_steps: 500
+  logging_steps: 25
+  early_stopping_patience: 3
+  early_stopping_threshold: 0.005
 
 lora:
-  r: 16
-  lora_alpha: 32
+  # 30 personas is a lot to separate; r=32 gives more capacity than the r=16
+  # that was tuned for a single user.
+  r: 32
+  lora_alpha: 64
   lora_dropout: 0.05
   # Empty = detect from the model. These were Llama names against a phi-3
   # base, which fuses q/k/v into qkv_proj and gate/up into gate_up_proj, so

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class DataConfig(BaseModel):
     raw_dir: str = "data/raw"
-    submission_filename: str = "litigi_submissions.jsonl"
+    submission_filename: str = "litigi_submissions.parquet"
     comments_filename: str = "litigi_comments.parquet"
     processed_dir: str = "data/processed"
     training_dir: str = "data/training"
@@ -38,16 +38,29 @@ class DataConfig(BaseModel):
 
 
 class ModelConfig(BaseModel):
-    base_model: str = "meta-llama/Llama-3.1-8B-Instruct"
+    # Matches config.default.yaml. These defaults are not decoration: with no
+    # config.yaml present, from_yaml() returns this model as-is, so anything
+    # stale here is what an unconfigured run actually trains with. This used
+    # to be meta-llama/Llama-3.1-8B-Instruct, a gated repo nothing in the
+    # project trains against.
+    base_model: str = "microsoft/phi-3-mini-4k-instruct"
     output_dir: str = "models/reddit_bot_lora"
 
 
 class TrainingConfig(BaseModel):
-    num_epochs: int = 3
+    # 2 epochs: the top-30 run converged at roughly two and the third bought
+    # 0.0014 of eval loss for an hour of rented GPU.
+    num_epochs: int = 2
+    # 4 x 8 holds the effective batch at 32 while halving peak activation
+    # memory, which max_seq_length 1024 needs.
     batch_size: int = 4
-    gradient_accumulation_steps: int = 4
-    learning_rate: float = 2e-4
-    max_seq_length: int = 512
+    gradient_accumulation_steps: int = 8
+    # Halved alongside the target-module fix, which tripled trainable
+    # parameters.
+    learning_rate: float = 1e-4
+    # Loss is masked to the reply, so an example whose prompt fills the window
+    # has nothing to learn from. At 512 that was 4.5% of the set.
+    max_seq_length: int = 1024
     warmup_ratio: float = 0.05
     train_ratio: float = 0.9
     # Batch similar-length sequences together. Padding waste on this dataset

@@ -1,35 +1,93 @@
+# litiGPT default configuration.
+#
+# This is the tracked template, and the one the containers ship as config.yaml.
+# Every key below exists in litigpt/config.py; anything you add that does not
+# is accepted silently by Pydantic and then ignored, so a typo here is
+# invisible. Copy to config.yaml (gitignored) for local edits, or pass
+# --config to point at one of the purpose-built files:
+#
+#   config.top30.yaml   the real 30-persona run, with its reasoning written out
+#   config.smoke.yaml   a tiny end-to-end rehearsal, minutes and free
+#   config.runpod.yaml  /workspace paths for a RunPod network volume
+
 data:
   raw_dir: "data/raw"
-  submission_filename: "litigi_submissions.jsonl"
+  submission_filename: "litigi_submissions.parquet"
   comments_filename: "litigi_comments.parquet"
   processed_dir: "data/processed"
   training_dir: "data/training"
-  target_usernames:
-    - "specific_reddit_user"
-    - "another_user"
+
+  # Name the personas explicitly, or leave this empty and set top_n_users to
+  # pick the N most prolific authors from the dump. An explicit list wins.
+  target_usernames: []
+  top_n_users: 0
+
+  # Cap pairs per user so one prolific author cannot dominate the mix.
+  # 0 disables the cap. In the top-30 cohort the loudest author had six times
+  # the material of the quietest.
+  max_pairs_per_user: 0
+
+  exclude_authors: ["[deleted]", "[removed]", "AutoModerator"]
+
+  # Drop the quoted parent ("> ...") from a user's own reply. The parent is
+  # already supplied as context, so keeping it teaches the model to copy.
+  strip_quoted_text: true
+
   min_comment_length: 10
   max_comment_length: 512
   min_score: 1
 
 model:
-  base_model: "meta-llama/Llama-3.1-8B-Instruct"
+  # phi-3-mini is the cheapest useful base and needs no gated-repo access.
+  # For Llama or Mistral, set HF_TOKEN first.
+  base_model: "microsoft/phi-3-mini-4k-instruct"
   # Alternatives:
-  # - "mistralai/Mistral-7B-Instruct-v0.2"
-  # - "microsoft/phi-3-mini-4k-instruct"
+  # - "mistralai/Mistral-7B-Instruct-v0.3"
+  # - "meta-llama/Llama-3.1-8B-Instruct"   (gated)
   output_dir: "models/reddit_bot_lora"
 
 training:
-  num_epochs: 3
+  num_epochs: 2
   batch_size: 4
-  gradient_accumulation_steps: 4
-  learning_rate: 2.0e-4
-  max_seq_length: 512
+  gradient_accumulation_steps: 8
+  learning_rate: 1.0e-4
+
+  # Loss is masked to the reply, so an example whose prompt alone fills the
+  # window has nothing left to learn from and is dropped.
+  max_seq_length: 1024
+
   warmup_ratio: 0.05
+  train_ratio: 0.9
+
+  # Batch similar-length sequences together. Padding waste on this data is
+  # ~103% without it, which roughly doubles the cost of a rented GPU.
+  group_by_length: true
+
+  # Evaluation cadence. These defaults suit a small set; on a large validation
+  # split a low eval_steps dominates runtime, so raise it as the data grows.
+  eval_steps: 50
+  save_steps: 100
+  logging_steps: 10
+  save_total_limit: 3
+
+  # Stop when eval_loss has not improved by more than the threshold for this
+  # many consecutive evaluations. 0 disables it. The threshold matters as much
+  # as the patience: fourth-decimal drift is not progress, but without a floor
+  # it resets the counter forever.
+  early_stopping_patience: 3
+  early_stopping_threshold: 0.005
 
 lora:
   r: 16
   lora_alpha: 32
   lora_dropout: 0.05
+  # Empty means detect from the loaded model, which is the right default.
+  # Projection names are architecture-specific -- phi-3 fuses q/k/v into
+  # qkv_proj and gate/up into gate_up_proj -- and a hardcoded Llama list
+  # matched two of seven names here, training a third of the intended
+  # parameters with nothing on the attention queries or keys. Training now
+  # refuses to start if a named module matches nothing.
+  target_modules: []
 
 inference:
   max_new_tokens: 256
@@ -38,16 +96,19 @@ inference:
   top_k: 50
   repetition_penalty: 1.1
 
+user_classification:
+  # Which persona the bot answers as. "random" picks from bot.available_users;
+  # "keyword" routes on the topic keywords below. There is no model-based
+  # router, by design -- see litigpt/inference/classifier.py.
+  strategy: "random"
+  user_keywords: {}
+
 bot:
   subreddit: "test"
   available_users: []
-  trigger_keywords: []  # Empty list = respond to all
+  trigger_keywords: []      # empty = consider every comment
   reply_probability: 0.2
   min_score_threshold: 1
   cooldown_seconds: 120
   max_context_depth: 3
   bot_username: "your_bot_username"
-
-user_classification:
-  strategy: "random"  # "random" or "keyword"
-  user_keywords: {}
