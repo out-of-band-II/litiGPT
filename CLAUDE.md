@@ -359,6 +359,7 @@ MLFLOW_TRACKING_URI=...       # Optional: http://localhost:5000
 - `multi_user_guide.md`: Multi-user setup
 - `colab_kaggle_guide.md`: Colab/Kaggle guide
 - `cloud_training_guide.md`: RunPod GPU training
+- `runpod_guide.md`: Operating and debugging RunPod pods
 - `blind_eval_guide.md`: Blind persona evaluation protocol
 
 ### For Developers
