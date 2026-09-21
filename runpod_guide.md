@@ -380,9 +380,35 @@ pod:
 runpodctl config --apiKey <key>
 ```
 
-Use a **Restricted** key with write access to Pods, never an "All" key — a key
-sitting on a pod can terminate every other pod on the account, including other
-projects'.
+In the **Create API key** dialog, choose **Restricted** and set:
+
+| Scope | Value | Why |
+|---|---|---|
+| `api.runpod.io/graphql` | **Read / Write** | `runpodctl`'s pod commands go here |
+| `api.runpod.ai` | **None** | the serverless API; the watchdog never touches it |
+
+At least one permission must be granted or the dialog refuses to create the
+key.
+
+**Be clear about what this does and does not buy you.** There is no per-pod
+scope, and no "Pods" scope: the granularity is the whole GraphQL API or
+nothing. `Read / Write` there means write access to **every pod on the
+account**, so a key sitting on this pod can stop or terminate a different
+project's pod. Restricted is better than "All" — it withholds the serverless
+API and the rest — but it does not isolate projects, and nothing on offer
+does.
+
+Two things follow:
+
+- **Treat any pod holding a key as able to control the whole account.** That
+  is an argument for not exposing such a pod publicly, and for deleting the
+  key when the run is over.
+- **RunPod already injects one.** Every pod's PID 1 environment carries a
+  `RUNPOD_API_KEY`, readable by anyone with a shell on the pod. So a pod is
+  arguably in this position already; a key you create yourself at least has a
+  scope you chose and can revoke from the console.
+
+Revoke it in the same **Settings → API Keys** page when the run is done.
 
 ---
 
