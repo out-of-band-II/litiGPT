@@ -472,8 +472,20 @@ mlflow ui --port 5000
 
 ### Test Coverage
 - Manual testing: Comprehensive
-- Unit tests: Not yet implemented
+- Unit tests: `tests/`, run with `python -m pytest` (needs `pytest`; it is in
+  the `dev` dependency group but not yet in `uv.lock`)
 - Integration tests: Not yet implemented
+
+The suite covers the failures that do not announce themselves — a LoRA target
+list matching no module, an interface rebuilding the thread format its own
+way, a persona name leaking into a blind round. All of these once passed
+review, trained or served without error, and were found only by reading two
+files side by side. Tests that only check things which would already have
+raised are not worth much here.
+
+`tests/test_prompts.py::TestNoSecondImplementation` inspects source rather
+than behaviour, on purpose: the interfaces need a loaded model to exercise, so
+the guard is against a second implementation existing at all.
 
 ## License & Ethics
 

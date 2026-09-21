@@ -34,4 +34,12 @@ dependencies = [
 dev = [
     "jupyter>=1.1.1",
     "pyan3>=2.2.0",
+    "pytest>=8.0.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The package is not installed into the environment, so put the repo root on
+# sys.path rather than requiring `pip install -e .` before tests can run.
+pythonpath = ["."]
+addopts = "-q"
