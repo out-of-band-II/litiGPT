@@ -26,7 +26,18 @@ WORK=/workspace
 OUT=$WORK/litiGPT/models/litigpt_top30_lora
 ARCHIVE=$WORK/litigpt_final.tar.gz
 LOG=$WORK/watchdog.log
-POD_ID="${RUNPOD_POD_ID:-v0u52o4sega7gs}"
+# RUNPOD_POD_ID is set in the container's own environment, but an SSH session
+# gets a fresh one and does NOT inherit it - verified empty over ssh on
+# 2026-09-21. RunPod also writes it to /etc/rp_environment, which is readable
+# from any session, so fall back to that.
+#
+# There is deliberately no hardcoded default. This used to name a specific pod,
+# and that pod was later terminated: the watchdog would have "stopped" a pod
+# that no longer existed, reported success, and left the real one billing.
+POD_ID="${RUNPOD_POD_ID:-}"
+if [ -z "$POD_ID" ] && [ -r /etc/rp_environment ]; then
+    POD_ID=$(sed -n 's/^export RUNPOD_POD_ID="\(.*\)"$/\1/p' /etc/rp_environment)
+fi
 
 log() { echo "[$(date -u '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
 
@@ -88,7 +99,10 @@ if [ "$MODE" = "--no-stop" ]; then
     exit 0
 fi
 
-if runpodctl get pod >/dev/null 2>&1; then
+if [ -z "$POD_ID" ]; then
+    log "ERROR: could not determine the pod id (RUNPOD_POD_ID unset and"
+    log "       /etc/rp_environment unreadable). Pod left RUNNING and STILL BILLING."
+elif runpodctl get pod >/dev/null 2>&1; then
     log "stopping pod $POD_ID"
     runpodctl stop pod "$POD_ID" >> "$LOG" 2>&1 \
         && log "stop command accepted" \
