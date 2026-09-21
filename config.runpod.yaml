@@ -45,14 +45,10 @@ lora:
   r: 16
   lora_alpha: 32
   lora_dropout: 0.05
-  target_modules:
-    - "q_proj"
-    - "k_proj"
-    - "v_proj"
-    - "o_proj"
-    - "gate_proj"
-    - "up_proj"
-    - "down_proj"
+  # Empty = detect from the model. These were Llama names against a phi-3
+  # base, which fuses q/k/v into qkv_proj and gate/up into gate_up_proj, so
+  # five of the seven silently matched nothing. See config.top30.yaml.
+  target_modules: []
 
 inference:
   max_new_tokens: 256

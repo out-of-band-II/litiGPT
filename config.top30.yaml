@@ -32,7 +32,12 @@ model:
   output_dir: "models/litigpt_top30_lora"
 
 training:
-  num_epochs: 3
+  # 2, not 3. The first run evaluated at 500-step intervals and eval_loss went
+  # 2.2431 -> 1.9648 (step 3500) -> 1.9634 (step 5000, the end). It converged
+  # at 3500, roughly two epochs; the last 1552 steps bought 0.0014 for about
+  # an hour of rented GPU. Early stopping below is the safety net if the
+  # corrected target_modules change where that point falls.
+  num_epochs: 2
   batch_size: 8
   gradient_accumulation_steps: 4
   learning_rate: 2.0e-4
@@ -46,6 +51,11 @@ training:
   eval_steps: 500
   save_steps: 500
   logging_steps: 25
+  # Three flat evaluations (1500 steps) ends the run. "Flat" means an
+  # improvement below 0.005 -- the fourth-decimal drift at the end of the
+  # first run would otherwise count as progress forever.
+  early_stopping_patience: 3
+  early_stopping_threshold: 0.005
 
 lora:
   # 30 personas is a lot to separate; r=32 gives the adapter more capacity than
@@ -53,14 +63,15 @@ lora:
   r: 32
   lora_alpha: 64
   lora_dropout: 0.05
-  target_modules:
-    - "q_proj"
-    - "k_proj"
-    - "v_proj"
-    - "o_proj"
-    - "gate_proj"
-    - "up_proj"
-    - "down_proj"
+  # Empty = detect from the loaded model. This used to name the seven Llama
+  # projections, of which phi-3 has two: it fuses q/k/v into qkv_proj and
+  # gate/up into gate_up_proj. PEFT adapted o_proj and down_proj, ignored the
+  # rest without a word, and still wrote all seven into adapter_config.json.
+  # The first run trained 17.8M parameters with nothing on the attention
+  # queries or keys. Detection gives qkv_proj, o_proj, gate_up_proj,
+  # down_proj -- about 50M parameters, and the training refuses to start now
+  # if a name matches nothing.
+  target_modules: []
 
 inference:
   max_new_tokens: 256

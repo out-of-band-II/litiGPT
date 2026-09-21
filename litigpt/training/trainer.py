@@ -15,6 +15,80 @@ from litigpt.model_utils import load_model_and_tokenizer as _load_model, DEFAULT
 
 logger = logging.getLogger(__name__)
 
+# Heads and embeddings are linear too, but adapting them is a different
+# decision with a large parameter cost, so auto-detection leaves them out.
+_NON_BLOCK_LINEARS = {"lm_head", "score", "classifier", "embed_out"}
+
+# bitsandbytes replaces nn.Linear during a 4-bit load, so match on class name
+# rather than isinstance(module, nn.Linear), which would find nothing under
+# QLoRA -- exactly the case this project trains in.
+_LINEAR_CLASSES = {"Linear", "Linear4bit", "Linear8bitLt", "LinearNF4"}
+
+
+def _leaf_names(model) -> set:
+    """Every module's final path segment, which is what PEFT matches on."""
+    return {name.rsplit(".", 1)[-1] for name, _ in model.named_modules() if name}
+
+
+def discover_target_modules(model) -> list:
+    """
+    Find the linear projections inside the transformer blocks.
+
+    Returns names suitable for LoraConfig.target_modules. Deriving them from
+    the model rather than hard-coding keeps this correct across architectures
+    that fuse their projections: Llama exposes q/k/v_proj and gate/up_proj,
+    while phi-3 fuses the same tensors into qkv_proj and gate_up_proj, so a
+    Llama-shaped list matches nothing on phi-3.
+    """
+    names = set()
+    for name, module in model.named_modules():
+        if module.__class__.__name__ not in _LINEAR_CLASSES:
+            continue
+        leaf = name.rsplit(".", 1)[-1]
+        if leaf in _NON_BLOCK_LINEARS:
+            continue
+        names.add(leaf)
+
+    if not names:
+        raise RuntimeError(
+            "Found no linear projections to adapt. The model may have loaded "
+            "with an unexpected layer implementation; pass target_modules "
+            "explicitly."
+        )
+    return sorted(names)
+
+
+def validate_target_modules(model, target_modules) -> None:
+    """
+    Raise unless every requested module name exists in the model.
+
+    A name that matches nothing is not a warning-level problem. PEFT adapts
+    the names it recognises, ignores the rest without comment, and writes the
+    full requested list into adapter_config.json regardless -- so the config
+    on disk claims seven modules while the weights hold two, and nothing in
+    the logs or the loss curve reveals it.
+    """
+    present = _leaf_names(model)
+    missing = [m for m in target_modules if m not in present]
+    if not missing:
+        return
+
+    matched = [m for m in target_modules if m in present]
+    available = discover_target_modules(model)
+    arch = getattr(getattr(model, "config", None), "model_type", "unknown")
+
+    raise ValueError(
+        f"LoRA target_modules do not match this model ({arch}).\n"
+        f"  requested:   {', '.join(target_modules)}\n"
+        f"  not found:   {', '.join(missing)}\n"
+        f"  would match: {', '.join(matched) or '(nothing)'}\n"
+        f"  available:   {', '.join(available)}\n\n"
+        "Set lora.target_modules in the config to the available names, or "
+        "leave it empty to detect them automatically. Training with this "
+        "list would silently adapt only part of the network."
+    )
+
+
 class RedditModelTrainer:
     def __init__(self,
                  model_name: str = DEFAULT_BASE_MODEL,
@@ -36,13 +110,26 @@ class RedditModelTrainer:
     
     def setup_lora(self, model, r: int = 16, lora_alpha: int = 32,
                    lora_dropout: float = 0.05, target_modules: list = None):
-        """Configure LoRA parameters"""
+        """
+        Configure LoRA parameters.
 
-        if target_modules is None:
-            target_modules = [
-                "q_proj", "k_proj", "v_proj", "o_proj",
-                "gate_proj", "up_proj", "down_proj",
-            ]
+        With target_modules left as None the projections are discovered from
+        the loaded model, which is the safe default: hard-coded name lists are
+        architecture-specific and fail silently on anything else.
+        """
+
+        if not target_modules:
+            target_modules = discover_target_modules(model)
+            logger.info(
+                "Auto-detected target modules: %s", ", ".join(target_modules)
+            )
+
+        # Refuse to train on a target list that does not match the model.
+        # PEFT adapts whatever it finds and says nothing about the rest, so a
+        # list written for another architecture produces a run that looks
+        # entirely healthy -- loss falls, checkpoints save -- while most of the
+        # network is untouched. This project lost a full 3-epoch run that way.
+        validate_target_modules(model, target_modules)
 
         lora_config = LoraConfig(
             r=r,
@@ -107,6 +194,8 @@ class RedditModelTrainer:
               lora_alpha: int = 32,
               lora_dropout: float = 0.05,
               lora_target_modules: list = None,
+              early_stopping_patience: int = 3,
+              early_stopping_threshold: float = 0.005,
               report_to: str = "none"):
         """Train the model"""
 
@@ -152,10 +241,29 @@ class RedditModelTrainer:
             bf16=self.use_bf16,
             report_to=report_to,
             load_best_model_at_end=True,
+            metric_for_best_model="eval_loss",
+            greater_is_better=False,
             max_length=max_seq_length,
             dataset_text_field="text",
             packing=False,
         )
+
+        # Stop once eval_loss stops moving meaningfully. The top-30 run
+        # converged at step 3500 and then spent 1552 more steps -- 31% of the
+        # run, about an hour of rented GPU -- to improve eval_loss by 0.0014.
+        # The threshold is what makes this work: without it, improvements in
+        # the fourth decimal place keep resetting the patience counter.
+        callbacks = []
+        if early_stopping_patience and early_stopping_patience > 0:
+            from transformers import EarlyStoppingCallback
+            callbacks.append(EarlyStoppingCallback(
+                early_stopping_patience=early_stopping_patience,
+                early_stopping_threshold=early_stopping_threshold,
+            ))
+            logger.info(
+                "Early stopping: patience %d evaluations, threshold %.4f",
+                early_stopping_patience, early_stopping_threshold,
+            )
 
         # Initialize trainer
         trainer = SFTTrainer(
@@ -164,6 +272,7 @@ class RedditModelTrainer:
             train_dataset=dataset["train"],
             eval_dataset=dataset["validation"],
             processing_class=tokenizer,
+            callbacks=callbacks,
         )
         
         # Train

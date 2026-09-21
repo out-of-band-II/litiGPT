@@ -60,16 +60,23 @@ class TrainingConfig(BaseModel):
     save_steps: int = 100
     logging_steps: int = 10
     save_total_limit: int = 3
+    # Stop when eval_loss has not improved by more than the threshold for this
+    # many consecutive evaluations. 0 disables it. The threshold matters as
+    # much as the patience: improvements in the fourth decimal place are not
+    # progress, but without a floor they keep the counter reset forever.
+    early_stopping_patience: int = 3
+    early_stopping_threshold: float = 0.005
 
 
 class LoraConfig(BaseModel):
     r: int = 16
     lora_alpha: int = 32
     lora_dropout: float = 0.05
-    target_modules: List[str] = [
-        "q_proj", "k_proj", "v_proj", "o_proj",
-        "gate_proj", "up_proj", "down_proj",
-    ]
+    # Empty means "detect from the loaded model", which is the right default:
+    # projection names are architecture-specific (phi-3 fuses q/k/v into
+    # qkv_proj), and a list that matches nothing trains silently on a fraction
+    # of the network. Set explicitly only to adapt a deliberate subset.
+    target_modules: List[str] = []
 
 
 class InferenceConfig(BaseModel):

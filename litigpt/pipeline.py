@@ -239,6 +239,8 @@ class PipelineRunner:
                 lora_alpha=lora_cfg.lora_alpha,
                 lora_dropout=lora_cfg.lora_dropout,
                 lora_target_modules=lora_cfg.target_modules,
+                early_stopping_patience=training_cfg.early_stopping_patience,
+                early_stopping_threshold=training_cfg.early_stopping_threshold,
                 report_to=report_to,
             )
 
