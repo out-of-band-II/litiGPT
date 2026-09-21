@@ -55,7 +55,7 @@ WORKDIR /workspace
 
 # Copy package and config
 COPY litigpt/ litigpt/
-COPY pyproject.toml requirements.txt ./
+COPY pyproject.toml ./
 # config.yaml is gitignored (user-specific); ship the tracked template and
 # let it be overridden at run time with -v or --config.
 COPY config.default.yaml ./config.yaml
