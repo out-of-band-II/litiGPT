@@ -162,20 +162,68 @@ class RedditModelTrainer:
         
         return dataset
     
-    def format_chat_template(self, example, tokenizer):
-        """Format examples using chat template"""
-        if "messages" in example:
-            # ChatML format
-            text = tokenizer.apply_chat_template(
-                example["messages"],
-                tokenize=False,
-                add_generation_prompt=False
+    @staticmethod
+    def split_prompt_completion(example):
+        """
+        Split a ChatML example into the prompt and the reply to be learned.
+
+        This is what makes the loss mask work. Handed a single block of text,
+        TRL scores every token in it -- the system prompt and the user's
+        context included -- so the model is trained to produce the other
+        side of the conversation as much as its own reply. Handed a
+        prompt/completion pair, it masks the prompt and scores only the
+        completion, which is the thing being learned.
+
+        TRL applies the chat template itself for conversational
+        prompt/completion data, so no templating happens here.
+        """
+        messages = example["messages"]
+        if not messages or messages[-1].get("role") != "assistant":
+            raise ValueError(
+                "Every training example must end with an assistant message; "
+                f"this one ends with {messages[-1].get('role') if messages else 'nothing'}."
             )
-        else:
-            # Raw text format
-            text = example["text"]
-        
-        return {"text": text}
+        return {"prompt": messages[:-1], "completion": messages[-1:]}
+
+    def format_chat_template(self, example, tokenizer):
+        """Render a raw-text example. Retained for non-ChatML datasets."""
+        return {"text": example["text"]}
+
+    @staticmethod
+    def drop_unlearnable(dataset, tokenizer, max_seq_length: int):
+        """
+        Remove examples whose reply cannot survive truncation.
+
+        Sequences are truncated from the right at max_seq_length. When the
+        prompt alone already fills it, the reply is cut away entirely and the
+        example has no unmasked tokens left -- it contributes nothing to the
+        loss while still costing a full forward and backward pass. Under the
+        old whole-sequence loss these examples were merely lopsided; with the
+        prompt masked they are empty.
+
+        On this dataset at 512 tokens that was 4.5% of examples, and at 1024
+        it is 0.6%. Dropping them is honest about the data; the alternative
+        is to trim context from the left during preprocessing.
+        """
+        def keeps_reply(example):
+            prompt_len = len(tokenizer.apply_chat_template(
+                example["prompt"], tokenize=True, add_generation_prompt=True
+            ))
+            # Leave room for at least one real reply token.
+            return prompt_len < max_seq_length - 1
+
+        before = {k: len(v) for k, v in dataset.items()}
+        dataset = dataset.filter(keeps_reply)
+        for split, n_before in before.items():
+            dropped = n_before - len(dataset[split])
+            if dropped:
+                logger.warning(
+                    "%s: dropped %d of %d examples (%.1f%%) whose reply does "
+                    "not fit within max_seq_length=%d",
+                    split, dropped, n_before, 100 * dropped / n_before,
+                    max_seq_length,
+                )
+        return dataset
     
     def train(self,
               data_dir: str = "data/training",
@@ -210,13 +258,30 @@ class RedditModelTrainer:
         
         # Prepare dataset
         dataset = self.prepare_dataset(data_dir)
-        
-        # Format dataset
-        dataset = dataset.map(
-            lambda x: self.format_chat_template(x, tokenizer),
-            remove_columns=dataset["train"].column_names
-        )
-        
+
+        # Format dataset. ChatML becomes prompt/completion so the prompt is
+        # masked out of the loss; anything else stays a plain text field and
+        # is scored whole, which is all that can be done without a role
+        # boundary to split on.
+        columns = dataset["train"].column_names
+        conversational = "messages" in columns
+        if conversational:
+            dataset = dataset.map(
+                self.split_prompt_completion, remove_columns=columns
+            )
+            logger.info("Dataset is conversational; loss masked to the reply only")
+            dataset = self.drop_unlearnable(dataset, tokenizer, max_seq_length)
+        else:
+            dataset = dataset.map(
+                lambda x: self.format_chat_template(x, tokenizer),
+                remove_columns=columns,
+            )
+            logger.warning(
+                "Dataset has no 'messages' column; training on whole sequences, "
+                "which also teaches the model to write the user's turns."
+            )
+
+
         # Training arguments (SFTConfig = TrainingArguments + SFT-specific params)
         training_args = SFTConfig(
             output_dir=self.output_dir,
@@ -244,8 +309,15 @@ class RedditModelTrainer:
             metric_for_best_model="eval_loss",
             greater_is_better=False,
             max_length=max_seq_length,
-            dataset_text_field="text",
             packing=False,
+            # For prompt/completion data this makes TRL label the prompt
+            # tokens -100 so they contribute nothing to the loss. It has no
+            # meaning for a plain text field, hence the conditional.
+            **(
+                {"completion_only_loss": True}
+                if conversational
+                else {"dataset_text_field": "text"}
+            ),
         )
 
         # Stop once eval_loss stops moving meaningfully. The top-30 run

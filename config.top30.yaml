@@ -38,10 +38,21 @@ training:
   # an hour of rented GPU. Early stopping below is the safety net if the
   # corrected target_modules change where that point falls.
   num_epochs: 2
-  batch_size: 8
-  gradient_accumulation_steps: 4
-  learning_rate: 2.0e-4
-  max_seq_length: 512
+  # 4 x 8 keeps the effective batch at 32, unchanged from the first run, while
+  # halving peak activation memory -- which matters because max_seq_length has
+  # doubled. Raise back to 8 x 4 if nvidia-smi shows headroom mid-run.
+  batch_size: 4
+  gradient_accumulation_steps: 8
+  # 1e-4, halved from 2e-4. The corrected target_modules raise the trainable
+  # parameter count from 17.8M to 50.3M, and holding the learning rate while
+  # nearly tripling capacity is how an adapter overwrites the base model's
+  # instruction-following instead of layering a voice on top of it.
+  learning_rate: 1.0e-4
+  # 1024, raised from 512. Loss is now masked to the reply, so an example
+  # whose prompt alone fills the window has nothing left to learn from. At
+  # 512 that was 4.5% of the set; at 1024 it is 0.6%. group_by_length means
+  # the extra room is only paid for on the batches that actually need it.
+  max_seq_length: 1024
   warmup_ratio: 0.05
   train_ratio: 0.9
   group_by_length: true
