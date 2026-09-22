@@ -196,10 +196,9 @@ class GradioChatInterface:
             # Examples
             gr.Examples(
                 examples=[
-                    ["What do you think about AI?"],
-                    ["What's your favorite programming language?"],
-                    ["Tell me about your hobbies"],
-                    ["What's the best pizza topping?"],
+                    ["Benvenuto su litigi!"],
+                    ["Mi hanno bannato da r/italy"],
+                    ["Chi è talpa?"],
                 ],
                 inputs=msg,
                 label="Example Questions",
