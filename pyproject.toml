@@ -1,3 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# Without this, setuptools falls back to flat-layout auto-discovery, sees
+# data/, models/ and litigpt/ as three candidate top-level packages and
+# refuses to build at all:
+#
+#   error: Multiple top-level packages discovered in a flat-layout:
+#          ['data', 'models', 'litigpt']
+#
+# data/ ships .gitkeep files, so it exists in every clone and `pip install -e .`
+# fails on a fresh checkout. Dockerfile.runpod never hit it because it COPYs
+# litigpt/ alone and so has nothing else to discover.
+[tool.setuptools.packages.find]
+include = ["litigpt*"]
+
 [project]
 name = "litigpt"
 version = "0.1.0"
