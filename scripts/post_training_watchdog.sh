@@ -16,6 +16,13 @@
 # the pod stops.
 #
 # usage: post_training_watchdog.sh <training-pid> [--no-stop]
+#
+# The adapter's location is model.output_dir in whichever config trained the
+# run, so hardcoding it here makes a second definition that drifts from the
+# first. It did: this script looked in litiGPT/models/litigpt_top30_lora while
+# config.runpod.yaml wrote to /workspace/models/reddit_bot_lora, which would
+# have logged "nothing archived" and stopped the pod anyway. Set
+# LITIGPT_OUTPUT_DIR to say where it is; otherwise it is found by search.
 
 set -u
 
@@ -23,7 +30,6 @@ PID="${1:?usage: post_training_watchdog.sh <training-pid> [--no-stop]}"
 MODE="${2:-}"
 
 WORK=/workspace
-OUT=$WORK/litiGPT/models/litigpt_top30_lora
 ARCHIVE=$WORK/litigpt_final.tar.gz
 LOG=$WORK/watchdog.log
 # RUNPOD_POD_ID is set in the container's own environment, but an SSH session
@@ -51,11 +57,27 @@ log "training process $PID exited"
 sleep 45   # let the trainer flush its final save and close MLflow
 
 # ---- locate the adapter to keep -------------------------------------------
-if [ -f "$OUT/adapter_model.safetensors" ]; then
+# Newest directory holding a real adapter, preferring a final save over a
+# checkpoint. The trainer writes the final adapter into output_dir itself, not
+# into an output_dir/final subdirectory - that subdirectory was an older
+# layout and the docs referred to it for a while after it stopped existing.
+find_adapter() {
+    find "$WORK" -maxdepth 5 -name adapter_model.safetensors "$@" \
+        -printf '%T@ %h\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-
+}
+
+OUT="${LITIGPT_OUTPUT_DIR:-}"
+if [ -n "$OUT" ]; then
+    log "output dir given: $OUT"
+elif OUT=$(find_adapter -not -path '*/checkpoint-*') && [ -n "$OUT" ]; then
+    log "output dir found by search: $OUT"
+fi
+
+if [ -n "${OUT:-}" ] && [ -f "$OUT/adapter_model.safetensors" ]; then
     SRC="$OUT"
     log "final adapter present at $SRC"
 else
-    SRC=$(ls -1d "$OUT"/checkpoint-* 2>/dev/null | sort -t- -k2 -n | tail -1)
+    SRC=$(find_adapter)
     log "no final adapter written; falling back to latest checkpoint: ${SRC:-none}"
 fi
 

@@ -32,11 +32,15 @@ model:
   output_dir: "models/litigpt_top30_lora"
 
 training:
-  # 2, not 3. The first run evaluated at 500-step intervals and eval_loss went
-  # 2.2431 -> 1.9648 (step 3500) -> 1.9634 (step 5000, the end). It converged
-  # at 3500, roughly two epochs; the last 1552 steps bought 0.0014 for about
-  # an hour of rented GPU. Early stopping below is the safety net if the
-  # corrected target_modules change where that point falls.
+  # 2, not 3. Confirmed on the corrected run (2026-09-21, 3352 steps, 2h49m):
+  # eval_loss 3.0371 -> 2.9475 -> 2.9084 -> 2.8908 -> 2.8784 -> 2.8758 at
+  # 500-step intervals. The last interval bought 0.0027, already under the
+  # early_stopping_threshold below, so a third epoch would buy noise.
+  #
+  # Do not compare those numbers with the first run's (2.2431 -> 1.9634).
+  # That run scored the whole templated example, so most of its loss came
+  # from the system prompt and the parent comments, which are free at
+  # inference. This one scores only the reply. Higher number, harder task.
   num_epochs: 2
   # 4 x 8 keeps the effective batch at 32, unchanged from the first run, while
   # halving peak activation memory -- which matters because max_seq_length has

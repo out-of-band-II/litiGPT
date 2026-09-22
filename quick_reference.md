@@ -42,8 +42,8 @@ bash scripts/wsl_smoke_test.sh                           # full rehearsal, minut
 ## Chat
 
 ```bash
-python launch_chat.py --model models/litigpt_top30_lora/final                  # Gradio  :7860
-python launch_chat.py --model models/litigpt_top30_lora/final --share          # public link
+python launch_chat.py --model models/litigpt_top30_lora                        # Gradio  :7860
+python launch_chat.py --model models/litigpt_top30_lora --share                # public link
 python launch_chat.py --interface ollama --model <adapter> --port 5000         # streaming :5000
 python launch_chat.py --interface blind  --model <adapter> --classifier        # blind eval :7861
 python launch_chat.py --interface blind  --oracle                              # ceiling, no GPU

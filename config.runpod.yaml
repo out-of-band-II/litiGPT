@@ -31,13 +31,18 @@ model:
   # Alternatives:
   # - "mistralai/Mistral-7B-Instruct-v0.3"
   # - "meta-llama/Llama-3.1-8B-Instruct"   (gated)
-  output_dir: "/workspace/models/reddit_bot_lora"
+  # Name it for the run it produces, not the generic template name. The
+  # post-training watchdog locates the adapter by search rather than by a
+  # path copied from here, so the two can no longer disagree - but a stale
+  # name still makes the artifact on the pod hard to identify.
+  output_dir: "/workspace/models/litigpt_top30_lora"
 
 training:
-  # 2, not 3. The first top-30 run evaluated every 500 steps and eval_loss went
-  # 2.2431 -> 1.9648 (step 3500) -> 1.9634 (step 5000, the end). It converged
-  # at roughly two epochs; the last 1552 steps bought 0.0014 for about an hour
-  # of rented GPU. Early stopping below is the safety net.
+  # 2, not 3. Confirmed on the corrected run (2026-09-21, 3352 steps, 2h49m):
+  # eval_loss fell 3.0371 -> 2.8758 over six 500-step evals, the last interval
+  # buying 0.0027 - already under early_stopping_threshold. A third epoch
+  # would buy noise. See config.top30.yaml for why these numbers are higher
+  # than the first run's and not comparable with them.
   num_epochs: 2
   # 4 x 8 keeps the effective batch at 32 while halving peak activation memory,
   # which matters because max_seq_length has doubled. Sized for a 24GB card

@@ -19,19 +19,36 @@ lifetimes, and most RunPod pain comes from confusing them:
 | Your own machine | — | — | The actual deliverables |
 
 The row that bites is the third column of the pod volume. **Pod-local storage
-is pinned to the physical host.** If that host's GPUs get taken while your pod
-is stopped, you cannot restart it *and you cannot get your data off it*. The
-volume is stranded with the machine.
+is pinned to the physical host.** If that host's GPUs are all taken while your
+pod is stopped, the pod will not start:
 
-That is not hypothetical — it happened to `v0u52o4sega7gs` here:
+> There are not enough free GPUs on the host machine to start this pod.
 
-> Your Pod's GPUs are no longer available.
+That is not hypothetical — `v0u52o4sega7gs` hit it, and so did
+`ams6n8th37ih4u` on 2026-09-22, the morning after a finished 3h run whose
+adapter had not been pulled down yet.
 
-The only reason it cost nothing was that the adapter, checkpoints and MLflow
-database had been copied down **before** the pod was stopped.
+**It is recoverable, and this guide used to say it was not.** A GPU pod can be
+started **CPU-only** from the web console. That needs no free GPU on the host,
+mounts the same `/workspace`, and bills about half — $0.37/hr against $0.74
+for the 4090. SSH in, pull everything, stop it again. The rescue above cost
+about two cents.
+
+Two things to know before you rely on it:
+
+- **The API cannot do it.** `pod-action` takes only
+  `start`/`stop`/`restart`/`terminate`, and the update PATCH has no GPU-count
+  field. The CPU-only start comes from the console or nowhere.
+- **The address changes.** After it comes up, `get-pod` reports `gpu.count: 0`
+  and a fresh `ssh.direct` host and port. Re-read them; do not trust the alias
+  in `~/.ssh/config`, which will still hold the previous port.
+
+A genuine host *failure*, as opposed to a busy host, is still unrecoverable.
+So the rule stands, it is just no longer the only line of defence:
 
 **Rule: pull anything you would mind losing before you stop a pod, not after.**
-A LoRA adapter is 35–70MB. There is no excuse.
+A LoRA adapter is 35–70MB. There is no excuse. Better still, put it on a
+network volume, which survives the host outright.
 
 ---
 
@@ -223,7 +240,7 @@ f.bundle <base>..main`) and `git pull` the bundle on the pod.
 single file, `scp`. For a directory, tar over ssh is faster:
 
 ```bash
-tar czf - models/litigpt_top30_lora/final data/training/val.jsonl \
+tar czf - models/litigpt_top30_lora data/training/val.jsonl \
   | ssh litigpt-pod "tar xzf - --no-same-owner -C /workspace/litiGPT"
 ```
 
@@ -547,8 +564,14 @@ ssh litigpt-pod "bash /workspace/litiGPT/scripts/pod_serve.sh stop"
 ssh litigpt-pod "tail -f /workspace/serve/app.log"
 
 # pull results BEFORE stopping the pod
-tar czf - -C /workspace/litiGPT/models/litigpt_top30_lora/final . \
-  | tar xzf - --no-same-owner -C ./models/litigpt_top30_lora/final
+# after a serving session, the artefact is the blind-eval log, not the adapter
+scp litigpt-pod:/workspace/litiGPT/data/eval/blind_eval.jsonl ./data/eval/blind_eval.pod.jsonl
+
+# after a training run, the adapter and the metrics DB
+mkdir -p ./models/litigpt_top30_lora
+tar czf - -C /workspace/litiGPT/models/litigpt_top30_lora . \
+  | tar xzf - --no-same-owner -C ./models/litigpt_top30_lora
+scp litigpt-pod:/workspace/mlflow.db ./models/litigpt_top30_lora/run_artifacts/
 ```
 
 ---

@@ -206,7 +206,7 @@ python -m litigpt.data.preliminary
 python scripts/validate_dataset.py --config config.top30.yaml
 bash scripts/wsl_smoke_test.sh
 
-python launch_chat.py --interface {gradio|ollama|blind} --model models/litigpt_top30_lora/final
+python launch_chat.py --interface {gradio|ollama|blind} --model models/litigpt_top30_lora
 python launch_chat.py --interface blind --oracle        # ceiling, no GPU needed
 
 uv run pytest

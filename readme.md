@@ -130,7 +130,7 @@ All three load a base model plus your adapter and talk to it through the same
 prompt builder the training data was written with. Launch any of them with:
 
 ```bash
-python launch_chat.py --interface {gradio|ollama|blind} --model models/litigpt_top30_lora/final
+python launch_chat.py --interface {gradio|ollama|blind} --model models/litigpt_top30_lora
 ```
 
 | Interface | Default port | What it is |
@@ -147,8 +147,8 @@ You can also run a module directly, which takes the same arguments minus the
 launcher's dispatch:
 
 ```bash
-python -m litigpt.interface.gradio_app --model models/litigpt_top30_lora/final
-python -m litigpt.interface.ollama     --model models/litigpt_top30_lora/final --port 5000
+python -m litigpt.interface.gradio_app --model models/litigpt_top30_lora
+python -m litigpt.interface.ollama     --model models/litigpt_top30_lora --port 5000
 ```
 
 Serving from a RunPod pod instead of locally: `scripts/pod_serve.sh
@@ -170,7 +170,7 @@ the personas are distinguishable.
 python launch_chat.py --interface blind --oracle
 
 # Then the model, with the TF-IDF attributor guessing alongside you.
-python launch_chat.py --interface blind --model models/litigpt_top30_lora/final --classifier
+python launch_chat.py --interface blind --model models/litigpt_top30_lora --classifier
 ```
 
 Run `--oracle` before reading any model score. It replays the persona's own
