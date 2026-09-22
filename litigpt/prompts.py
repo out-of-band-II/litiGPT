@@ -4,7 +4,7 @@ Shared prompt templates for training and inference.
 All prompts are in Italian since the bot is deployed on an Italian subreddit.
 """
 
-from typing import Iterable, Tuple
+from collections.abc import Iterable
 
 # What to call the person on the other side of a chat interface. Training data
 # carries real Reddit usernames here; at inference there is no real name to
@@ -15,7 +15,7 @@ from typing import Iterable, Tuple
 DEFAULT_HUMAN_HANDLE = "utente"
 
 
-def render_thread(turns: Iterable[Tuple[str, str]]) -> str:
+def render_thread(turns: Iterable[tuple[str, str]]) -> str:
     """
     Render (speaker, text) pairs as the Reddit thread format used in training.
 

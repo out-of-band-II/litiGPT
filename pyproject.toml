@@ -50,6 +50,7 @@ dev = [
     "jupyter>=1.1.1",
     "pyan3>=2.2.0",
     "pytest>=8.0.0",
+    "ruff>=0.16.8",
 ]
 
 [tool.pytest.ini_options]
@@ -58,3 +59,96 @@ testpaths = ["tests"]
 # sys.path rather than requiring `pip install -e .` before tests can run.
 pythonpath = ["."]
 addopts = "-q"
+[tool.ruff]
+# The source sits at about 100 columns. E501 is not enforced (see lint.ignore),
+# so this only reaches `ruff format`, which nothing runs automatically.
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# Selected explicitly rather than left to the default. Ruff's default selection
+# widened between releases, and one extension update turned a quiet tree into
+# ~250 findings without a line of code changing. Naming the families means a
+# ruff upgrade alters this codebase only when we decide it should.
+select = [
+    "A",    # shadowing a builtin
+    "B",    # bugbear: the silent-footgun patterns
+    "BLE",  # blind except
+    "C4",   # comprehensions
+    "DTZ",  # naive datetimes
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "FURB", # modernisations
+    "G",    # logging call shape
+    "I",    # import order
+    "ISC",  # implicit string concatenation
+    "LOG",  # logging misuse
+    "N",    # pep8 naming
+    "PERF", # obvious slow paths
+    "PIE",  # miscellaneous
+    "PL",   # pylint
+    "RET",  # return flow
+    "RUF",  # ruff's own
+    "S",    # bandit
+    "SIM",  # simplifications
+    "UP",   # pyupgrade; the floor is 3.11
+    "W",    # pycodestyle warnings
+    "YTT",  # sys.version misuse
+]
+
+ignore = [
+    # A dozen lines run 101-136 columns, nearly all log format strings and call
+    # signatures that read worse wrapped than long.
+    "E501",
+
+    # The blind catches are deliberate and each one is commented at the site.
+    # Every one wraps either an optional dependency (psutil, the HuggingFace
+    # cache scan, an MLflow log) or a single iteration of a bot that has to
+    # survive whatever a Reddit API call throws at it. All of them log with
+    # context and degrade, which is the half of the CLAUDE.md rule that
+    # matters; narrowing them to guessed exception types would convert a
+    # logged warning into a stopped bot.
+    "BLE001",
+
+    # datetime.now() without a timezone is the intent: these are MLflow run
+    # names and chat timestamps, read by a human in their own timezone.
+    "DTZ005",
+
+    # random drives persona sampling and blind-round shuffling. Nothing here
+    # is a secret, and blind_eval seeds it deliberately for reproducibility.
+    "S311",
+
+    # The launcher builds argv as a list from parsed flags, never a shell
+    # string, and the executable is sys.executable.
+    "S603",
+
+    # Imports inside functions are load-bearing here. pipeline.py defers torch,
+    # transformers and mlflow so that `--step extract` does not pay for a CUDA
+    # import it never uses, and so a box without them can still run the data
+    # steps. Hoisting these to the top would undo that.
+    "PLC0415",
+
+    # Bare numbers in comparisons are mostly token budgets and cohort
+    # thresholds, each already explained by a comment or a config key.
+    "PLR2004",
+
+    # Argument counts, branch counts and statement counts. The pipeline and
+    # trainer entry points take one parameter per tunable on purpose, and
+    # these rules would only be satisfied by inventing parameter objects.
+    "PLR09",
+
+    # `for line in f: line = line.strip()` in five loaders. The rule is aimed
+    # at accidental shadowing; here rebinding is the idiom.
+    "PLW2901",
+
+    # `a + [b]` versus `[*a, b]`. Cosmetic, and ruff itself rates the fix
+    # unsafe because it changes behaviour for non-list sequences.
+    "RUF005",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# assert is the whole idiom of pytest.
+"tests/*" = ["S101"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["litigpt"]

@@ -23,9 +23,9 @@ personas, not as an absolute measure of how convincing an impersonation is.
 import json
 import logging
 import random
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -38,20 +38,20 @@ MIN_ATTRIBUTION_CHARS = 25
 class AttributionResult:
     """A ranked guess at who wrote a piece of text."""
 
-    ranking: List[Tuple[str, float]]
+    ranking: list[tuple[str, float]]
 
     @property
-    def top1(self) -> Optional[str]:
+    def top1(self) -> str | None:
         return self.ranking[0][0] if self.ranking else None
 
     @property
     def top1_confidence(self) -> float:
         return self.ranking[0][1] if self.ranking else 0.0
 
-    def top_k(self, k: int) -> List[str]:
+    def top_k(self, k: int) -> list[str]:
         return [name for name, _ in self.ranking[:k]]
 
-    def rank_of(self, username: str) -> Optional[int]:
+    def rank_of(self, username: str) -> int | None:
         """1-based rank of `username`, or None if it is not in the ranking."""
         for i, (name, _) in enumerate(self.ranking, start=1):
             if name == username:
@@ -146,9 +146,9 @@ class AuthorAttributor:
         head, because the file is written in extraction order and the head of a
         user's block is not a fair sample of their writing.
         """
-        by_author: Dict[str, List[str]] = {}
+        by_author: dict[str, list[str]] = {}
 
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
@@ -171,8 +171,8 @@ class AuthorAttributor:
             raise ValueError(f"no usable training samples found in {path}")
 
         rng = random.Random(seed)
-        texts: List[str] = []
-        labels: List[str] = []
+        texts: list[str] = []
+        labels: list[str] = []
         for author, samples in sorted(by_author.items()):
             if 0 < max_per_class < len(samples):
                 samples = rng.sample(samples, max_per_class)
@@ -191,7 +191,7 @@ class AuthorAttributor:
     def predict(
         self,
         text: str,
-        restrict_to: Optional[Sequence[str]] = None,
+        restrict_to: Sequence[str] | None = None,
     ) -> AttributionResult:
         """
         Rank the cohort by how likely each member is to have written `text`.
@@ -206,7 +206,7 @@ class AuthorAttributor:
 
         probabilities = self.pipeline.predict_proba([text])[0]
         ranking = sorted(
-            zip(self.classes, (float(p) for p in probabilities)),
+            zip(self.classes, (float(p) for p in probabilities), strict=True),
             key=lambda pair: pair[1],
             reverse=True,
         )
@@ -274,13 +274,13 @@ def _assistant_text(record: dict) -> str:
 
 def load_labelled_responses(
     path: str,
-    restrict_to: Optional[Sequence[str]] = None,
-) -> List[Tuple[str, str]]:
+    restrict_to: Sequence[str] | None = None,
+) -> list[tuple[str, str]]:
     """Read (username, assistant_response) pairs from a ChatML jsonl file."""
     allowed = set(restrict_to) if restrict_to else None
-    samples: List[Tuple[str, str]] = []
+    samples: list[tuple[str, str]] = []
 
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
             if not line:
@@ -305,8 +305,8 @@ def held_out_ceiling(
     path: str,
     limit: int = 1500,
     seed: int = 0,
-    restrict_to: Optional[Sequence[str]] = None,
-) -> Dict[str, float]:
+    restrict_to: Sequence[str] | None = None,
+) -> dict[str, float]:
     """
     Score the attributor on *real* held-out comments.
 

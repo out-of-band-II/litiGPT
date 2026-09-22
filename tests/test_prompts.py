@@ -11,6 +11,8 @@ survived in two interfaces at once until the files were read side by side.
 These tests pin the format down.
 """
 
+from typing import ClassVar
+
 import pytest
 
 from litigpt.prompts import (
@@ -163,7 +165,6 @@ class TestPreprocessingContextUnchanged:
         ],
     )
     def test_matches_the_original_loop(self, items):
-        from litigpt.data.preprocessing import RedditDataPreprocessor
 
         new = render_thread(
             (i.get("author", "unknown"), i.get("body") or i.get("selftext", ""))
@@ -183,7 +184,7 @@ class TestNoSecondImplementation:
     wrong value, it is a second implementation existing at all.
     """
 
-    MODULES = [
+    MODULES: ClassVar[list[str]] = [
         "litigpt/data/preprocessing.py",
         "litigpt/interface/gradio_app.py",
         "litigpt/interface/ollama.py",

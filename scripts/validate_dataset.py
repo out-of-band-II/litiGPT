@@ -56,7 +56,7 @@ def load(path: Path):
             try:
                 rows.append(json.loads(line))
             except json.JSONDecodeError as e:
-                raise SystemExit(f"{path}:{i}: malformed JSON: {e}")
+                raise SystemExit(f"{path}:{i}: malformed JSON: {e}") from None
     return rows
 
 

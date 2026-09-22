@@ -5,25 +5,23 @@ Simplifies launching Gradio or Ollama interfaces
 """
 
 import argparse
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
 
 from litigpt.model_utils import DEFAULT_BASE_MODEL
 
+
 def check_dependencies():
     """Check if required packages are installed"""
-    missing = []
-
-    try:
-        import gradio
-    except ImportError:
-        missing.append("gradio")
-
-    try:
-        import flask
-    except ImportError:
-        missing.append("flask")
+    # find_spec rather than import: gradio drags in torch, and this runs
+    # before every launch just to print an install hint.
+    missing = [
+        package
+        for package in ("gradio", "flask")
+        if importlib.util.find_spec(package) is None
+    ]
 
     if missing:
         print(f"Missing dependencies: {', '.join(missing)}")
@@ -54,7 +52,7 @@ def launch_gradio(model_path, base_model, config, share, port):
     print(f"Port: {port}")
     print("="*60 + "\n")
 
-    subprocess.run(cmd)
+    subprocess.run(cmd, check=False)
 
 def launch_blind(model_path, base_model, config, share, port, host,
                  oracle, classifier, seed):
@@ -86,7 +84,7 @@ def launch_blind(model_path, base_model, config, share, port, host,
     print(f"Port: {port}")
     print("="*60 + "\n")
 
-    subprocess.run(cmd)
+    subprocess.run(cmd, check=False)
 
 def launch_ollama(model_path, base_model, config, host, port):
     """Launch Ollama-style interface"""
@@ -107,7 +105,7 @@ def launch_ollama(model_path, base_model, config, host, port):
     print(f"URL: http://{host}:{port}")
     print("="*60 + "\n")
 
-    subprocess.run(cmd)
+    subprocess.run(cmd, check=False)
 
 def main():
     parser = argparse.ArgumentParser(

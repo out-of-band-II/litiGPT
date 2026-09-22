@@ -4,19 +4,19 @@ Simple web interface for chatting with the Reddit bot
 """
 
 import logging
+from pathlib import Path
 
 import gradio as gr
 import torch
-from pathlib import Path
-from typing import List, Tuple, Optional
+
 from litigpt.config import Config
-from litigpt.prompts import build_system_prompt, render_thread, DEFAULT_HUMAN_HANDLE
 from litigpt.model_utils import (
+    DEFAULT_BASE_MODEL,
+    DEFAULT_USERNAME,
     load_model_and_tokenizer,
     load_user_metadata,
-    DEFAULT_USERNAME,
-    DEFAULT_BASE_MODEL,
 )
+from litigpt.prompts import DEFAULT_HUMAN_HANDLE, build_system_prompt, render_thread
 
 logger = logging.getLogger(__name__)
 
@@ -57,14 +57,14 @@ class GradioChatInterface:
         logger.info("Model loaded successfully!")
 
         # Load user metadata
-        self.available_users: List[str] = load_user_metadata(
+        self.available_users: list[str] = load_user_metadata(
             self.config.data.processed_dir
         )
 
     def generate_response(self,
                          message: str,
-                         history: List[Tuple[str, str]],
-                         username: Optional[str] = None,
+                         history: list[tuple[str, str]],
+                         username: str | None = None,
                          temperature: float = 0.8,
                          max_tokens: int = 256) -> str:
         """Generate response to user message"""
@@ -265,7 +265,7 @@ class GradioChatInterface:
                 [msg, chatbot],
             )
 
-            clear.click(lambda: [], None, chatbot, queue=False)
+            clear.click(list, None, chatbot, queue=False)
 
             retry.click(
                 retry_last,

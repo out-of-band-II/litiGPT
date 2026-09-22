@@ -14,7 +14,7 @@ need no network and no GPU.
 
 import pytest
 import torch
-import torch.nn as nn
+from torch import nn
 
 from litigpt.training.trainer import (
     discover_target_modules,

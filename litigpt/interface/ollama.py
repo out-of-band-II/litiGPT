@@ -3,22 +3,22 @@ Module 10: Ollama-Style Chat Interface
 Modern, terminal-inspired chat interface for Reddit bot
 """
 
-import logging
-
-from flask import Flask, render_template, request, jsonify, Response
-from pathlib import Path
 import json
-from typing import List, Dict, Optional
+import logging
+import threading
+from datetime import datetime
+from pathlib import Path
+
+from flask import Flask, Response, jsonify, render_template, request
+
 from litigpt.config import Config
-from litigpt.prompts import build_system_prompt, render_thread, DEFAULT_HUMAN_HANDLE
 from litigpt.model_utils import (
+    DEFAULT_BASE_MODEL,
+    DEFAULT_USERNAME,
     load_model_and_tokenizer,
     load_user_metadata,
-    DEFAULT_USERNAME,
-    DEFAULT_BASE_MODEL,
 )
-from datetime import datetime
-import threading
+from litigpt.prompts import DEFAULT_HUMAN_HANDLE, build_system_prompt, render_thread
 
 logger = logging.getLogger(__name__)
 
@@ -43,17 +43,17 @@ class OllamaChatInterface:
         logger.info("Model loaded successfully!")
 
         # Load user metadata
-        self.available_users: List[str] = load_user_metadata(
+        self.available_users: list[str] = load_user_metadata(
             self.config.data.processed_dir
         )
 
         # Conversation history
-        self.conversations: Dict[str, List[Dict]] = {}
+        self.conversations: dict[str, list[dict]] = {}
 
     def generate_response_stream(self,
                                 message: str,
                                 session_id: str,
-                                username: Optional[str] = None,
+                                username: str | None = None,
                                 temperature: float = 0.8,
                                 max_tokens: int = 256):
         """Generate response with streaming"""
@@ -143,7 +143,7 @@ class OllamaChatInterface:
             'timestamp': datetime.now().isoformat(),
         })
 
-    def get_conversation(self, session_id: str) -> List[Dict]:
+    def get_conversation(self, session_id: str) -> list[dict]:
         """Get conversation history"""
         return self.conversations.get(session_id, [])
 
@@ -154,7 +154,7 @@ class OllamaChatInterface:
 
 
 # Global interface instance
-chat_interface: Optional[OllamaChatInterface] = None
+chat_interface: OllamaChatInterface | None = None
 
 
 @app.route('/')
@@ -730,7 +730,10 @@ def main():
     save_template()
 
     # Create interface
-    global chat_interface
+    # The Flask routes close over this module-level singleton; building it
+    # here is what makes them work. Replacing it with an app factory is a
+    # refactor, not a lint fix.
+    global chat_interface  # noqa: PLW0603
     chat_interface = OllamaChatInterface(
         model_path=args.model,
         base_model=args.base_model,
@@ -741,7 +744,7 @@ def main():
     print("Reddit Bot Chat Interface")
     print(f"{'='*60}")
     print(f"\nServer starting on http://{args.host}:{args.port}")
-    print(f"Press Ctrl+C to stop\n")
+    print("Press Ctrl+C to stop\n")
 
     app.run(host=args.host, port=args.port, debug=False)
 

@@ -4,18 +4,18 @@ Clean and format data for training
 """
 
 import html
+import logging
 import random
 import re
-import logging
-from typing import List, Dict, Tuple
-import jsonlines
-from pathlib import Path
-import polars as pl
 from argparse import ArgumentParser
+from pathlib import Path
+
+import jsonlines
+import polars as pl
 
 from litigpt.prompts import (
-    build_system_prompt,
     build_alpaca_instruction,
+    build_system_prompt,
     render_thread,
 )
 
@@ -36,7 +36,7 @@ class RedditDataPreprocessor:
     _MD_LINK = re.compile(r"\[([^\]]*)\]\(https?://[^)]*\)")
     _BARE_URL = re.compile(r"https?://\S+")
     # Zero-width and BOM characters carry no style signal, only noise tokens.
-    _ZERO_WIDTH = re.compile(r"[​‌‍﻿]")
+    _ZERO_WIDTH = re.compile(r"[\u200b\u200c\u200d\ufeff]")
 
     @staticmethod
     def _unescape_fully(text: str, max_passes: int = 3) -> str:
@@ -129,12 +129,12 @@ class RedditDataPreprocessor:
             df = df.with_columns(pl.col('score').cast(pl.Int64, strict=False))
             df = df.filter(pl.col('score') >= self.min_score)
 
-        logger.info(f"After filtering: {len(df)} entries")
+        logger.info("After filtering: %s entries", len(df))
         return df
 
     def create_training_pairs(self, user_data: pl.DataFrame,
-                             thread_data: Dict,
-                             username: str = None) -> List[Dict]:
+                             thread_data: dict,
+                             username: str | None = None) -> list[dict]:
         """
         Create (context, response) pairs for training
 
@@ -180,14 +180,14 @@ class RedditDataPreprocessor:
 
                 training_pairs.append(pair)
 
-        logger.info(f"Created {len(training_pairs)} training pairs")
+        logger.info("Created %s training pairs", len(training_pairs))
         return training_pairs
 
     def create_multi_user_training_pairs(self,
-                                        users_data: Dict[str, pl.DataFrame],
-                                        thread_data: Dict,
+                                        users_data: dict[str, pl.DataFrame],
+                                        thread_data: dict,
                                         max_pairs_per_user: int = 0,
-                                        seed: int = 0) -> List[Dict]:
+                                        seed: int = 0) -> list[dict]:
         """
         Create training pairs for a cohort of users.
 
@@ -228,7 +228,7 @@ class RedditDataPreprocessor:
                         lo, hi, hi / max(lo, 1))
         return all_pairs
 
-    def _format_context(self, context_items: List[Dict]) -> str:
+    def _format_context(self, context_items: list[dict]) -> str:
         """
         Format context items into a single string.
 
@@ -244,8 +244,8 @@ class RedditDataPreprocessor:
             for item in context_items
         )
 
-    def format_for_training(self, pairs: List[Dict],
-                           format_type: str = "chatml") -> List[Dict]:
+    def format_for_training(self, pairs: list[dict],
+                           format_type: str = "chatml") -> list[dict]:
         """
         Format training pairs for specific model format
 
@@ -307,8 +307,8 @@ class RedditDataPreprocessor:
 
         return formatted_data
 
-    def split_data(self, data: List[Dict],
-                   train_ratio: float = 0.9) -> Tuple[List[Dict], List[Dict]]:
+    def split_data(self, data: list[dict],
+                   train_ratio: float = 0.9) -> tuple[list[dict], list[dict]]:
         """Split into train/validation sets"""
         import random
         random.shuffle(data)
@@ -317,10 +317,10 @@ class RedditDataPreprocessor:
         train_data = data[:split_idx]
         val_data = data[split_idx:]
 
-        logger.info(f"Train: {len(train_data)}, Validation: {len(val_data)}")
+        logger.info("Train: %s, Validation: %s", len(train_data), len(val_data))
         return train_data, val_data
 
-    def save_training_data(self, train_data: List[Dict], val_data: List[Dict],
+    def save_training_data(self, train_data: list[dict], val_data: list[dict],
                           output_dir: str = "data/training"):
         """Save formatted training data"""
         output_path = Path(output_dir)
@@ -333,11 +333,11 @@ class RedditDataPreprocessor:
         with jsonlines.open(output_path / "val.jsonl", 'w') as writer:
             writer.write_all(val_data)
 
-        logger.info(f"Saved training data to {output_dir}")
+        logger.info("Saved training data to %s", output_dir)
 
 def preprocessing_parser():
     parser = ArgumentParser(description="Preprocessing module",
-                            epilog=f"""
+                            epilog="""
     Examples:
     python %(prog)s -c litigi_comments.parquet -u outofband
     """)

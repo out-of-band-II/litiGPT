@@ -8,11 +8,10 @@ across generator.py, trainer.py, gradio_app.py, and ollama.py.
 import json
 import logging
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from peft import PeftModel
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +23,7 @@ DEFAULT_USERNAME = "anonimo"
 DEFAULT_BASE_MODEL = "microsoft/phi-3-mini-4k-instruct"
 
 
-def _detect_compute_dtype() -> Tuple[torch.dtype, bool]:
+def _detect_compute_dtype() -> tuple[torch.dtype, bool]:
     """Detect optimal compute dtype based on GPU capabilities."""
     if not torch.cuda.is_available():
         # On CPU, float16 is the wrong answer: PyTorch's CPU kernels cover it
@@ -40,7 +39,7 @@ def _detect_compute_dtype() -> Tuple[torch.dtype, bool]:
     return compute_dtype, use_bf16
 
 
-def _estimate_weight_bytes(base_model: str) -> Optional[int]:
+def _estimate_weight_bytes(base_model: str) -> int | None:
     """
     Size of a model's weight files, if it is already in the HuggingFace cache.
 
@@ -107,11 +106,11 @@ def _check_cpu_headroom(base_model: str) -> None:
 
 def load_model_and_tokenizer(
     base_model: str,
-    adapter_path: Optional[str] = None,
+    adapter_path: str | None = None,
     load_in_4bit: bool = True,
     for_training: bool = False,
     trust_remote_code: bool = False,
-) -> Tuple[AutoModelForCausalLM, AutoTokenizer, torch.dtype]:
+) -> tuple[AutoModelForCausalLM, AutoTokenizer, torch.dtype]:
     """
     Load a model and tokenizer with optional quantization and LoRA adapters.
 
@@ -125,7 +124,7 @@ def load_model_and_tokenizer(
     Returns:
         (model, tokenizer, compute_dtype) tuple.
     """
-    compute_dtype, use_bf16 = _detect_compute_dtype()
+    compute_dtype, _use_bf16 = _detect_compute_dtype()
     logger.info("Compute dtype: %s", str(compute_dtype).replace("torch.", ""))
 
     # bitsandbytes 4-bit kernels are CUDA-only. Asking for them on a CPU-only
@@ -199,7 +198,7 @@ def load_model_and_tokenizer(
     return model, tokenizer, compute_dtype
 
 
-def load_user_metadata(processed_dir: str) -> List[str]:
+def load_user_metadata(processed_dir: str) -> list[str]:
     """
     Load the list of available usernames from users_metadata.json.
 
@@ -209,7 +208,7 @@ def load_user_metadata(processed_dir: str) -> List[str]:
     if not metadata_path.exists():
         return []
     try:
-        with open(metadata_path, "r") as f:
+        with open(metadata_path) as f:
             metadata = json.load(f)
         users = metadata.get("users", [])
         logger.info("Loaded %d users: %s", len(users), users)

@@ -6,7 +6,6 @@ Loads settings from config.yaml with validation, defaults, and type safety.
 
 import logging
 from pathlib import Path
-from typing import Dict, List
 
 import yaml
 from pydantic import BaseModel
@@ -20,7 +19,7 @@ class DataConfig(BaseModel):
     comments_filename: str = "litigi_comments.parquet"
     processed_dir: str = "data/processed"
     training_dir: str = "data/training"
-    target_usernames: List[str] = []
+    target_usernames: list[str] = []
     # Leave target_usernames empty and set top_n_users to pick the N most
     # prolific authors automatically. An explicit target_usernames wins.
     top_n_users: int = 0
@@ -28,7 +27,7 @@ class DataConfig(BaseModel):
     # 0 disables the cap.
     max_pairs_per_user: int = 0
     # Never treat these as trainable personas.
-    exclude_authors: List[str] = ["[deleted]", "[removed]", "AutoModerator"]
+    exclude_authors: list[str] = ["[deleted]", "[removed]", "AutoModerator"]
     # Drop the quoted parent text ("> ...") from a user's own reply. The parent
     # is already supplied as context, so keeping it teaches the model to copy.
     strip_quoted_text: bool = True
@@ -89,7 +88,7 @@ class LoraConfig(BaseModel):
     # projection names are architecture-specific (phi-3 fuses q/k/v into
     # qkv_proj), and a list that matches nothing trains silently on a fraction
     # of the network. Set explicitly only to adapt a deliberate subset.
-    target_modules: List[str] = []
+    target_modules: list[str] = []
 
 
 class InferenceConfig(BaseModel):
@@ -102,8 +101,8 @@ class InferenceConfig(BaseModel):
 
 class BotConfig(BaseModel):
     subreddit: str = "test"
-    available_users: List[str] = []
-    trigger_keywords: List[str] = []
+    available_users: list[str] = []
+    trigger_keywords: list[str] = []
     reply_probability: float = 0.2
     min_score_threshold: int = 1
     cooldown_seconds: int = 120
@@ -113,7 +112,7 @@ class BotConfig(BaseModel):
 
 class UserClassificationConfig(BaseModel):
     strategy: str = "random"  # "random" or "keyword"
-    user_keywords: Dict[str, List[str]] = {}
+    user_keywords: dict[str, list[str]] = {}
 
 
 class Config(BaseModel):
@@ -131,7 +130,7 @@ class Config(BaseModel):
         config_path = Path(path)
         if not config_path.exists():
             return cls()
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             raw = yaml.safe_load(f) or {}
         return cls(**raw)
 

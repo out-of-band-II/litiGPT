@@ -3,20 +3,20 @@ Module 5: Reddit Bot Deployment
 Deploy bot to monitor and respond to Reddit comments
 """
 
-import praw
-from praw.models import Comment
-import time
 import logging
-import random
-from collections import deque
-from datetime import datetime
-from typing import Optional, List, Tuple
 import os
+import random
+import time
+from collections import deque
+
+import praw
 from dotenv import load_dotenv
+from praw.models import Comment
+
+from litigpt.inference.classifier import RandomUserSelector, UserSelector
 
 # Import inference module
 from litigpt.inference.generator import RedditBotInference
-from litigpt.inference.classifier import UserSelector, RandomUserSelector
 from litigpt.model_utils import DEFAULT_USERNAME
 from litigpt.prompts import render_thread
 
@@ -28,14 +28,14 @@ class RedditBot:
                  base_model: str,
                  subreddit_name: str,
                  bot_username: str,
-                 trigger_keywords: Optional[list] = None,
+                 trigger_keywords: list | None = None,
                  reply_probability: float = 0.3,
                  min_score_threshold: int = 1,
                  cooldown_seconds: int = 60,
-                 available_users: Optional[List[str]] = None,
-                 user_selector: Optional[UserSelector] = None,
+                 available_users: list[str] | None = None,
+                 user_selector: UserSelector | None = None,
                  max_depth: int = 3,
-                 inference_config: Optional[dict] = None,
+                 inference_config: dict | None = None,
                  mention_poll_seconds: int = 300,
                  idle_sleep_seconds: int = 5):
         """
@@ -100,8 +100,8 @@ class RedditBot:
         self.idle_sleep_seconds = idle_sleep_seconds
         self._last_mention_check = 0
 
-        logger.info(f"Bot initialized for r/{subreddit_name}")
-        logger.info(f"Available users: {', '.join(self.available_users) or '(default)'}")
+        logger.info("Bot initialized for r/%s", subreddit_name)
+        logger.info("Available users: %s", ', '.join(self.available_users) or '(default)')
 
     def _mark_processed(self, comment_id: str):
         """Mark a comment as processed, evicting oldest if at capacity."""
@@ -125,7 +125,7 @@ class RedditBot:
         ]
         missing = [v for v in required_vars if not os.getenv(v)]
         if missing:
-            raise EnvironmentError(
+            raise OSError(
                 f"Missing required environment variables: {', '.join(missing)}. "
                 "Add them to your .env file."
             )
@@ -138,7 +138,7 @@ class RedditBot:
             password=os.getenv("REDDIT_PASSWORD"),
         )
 
-        logger.info(f"Logged in as: {reddit.user.me()}")
+        logger.info("Logged in as: %s", reddit.user.me())
         return reddit
 
     def should_respond(self, comment) -> bool:
@@ -172,17 +172,14 @@ class RedditBot:
 
         # Cooldown check
         current_time = time.time()
-        if current_time - self.last_reply_time < self.cooldown_seconds:
-            return False
-
-        return True
+        return current_time - self.last_reply_time >= self.cooldown_seconds
 
     @staticmethod
     def _speaker(thing) -> str:
         """Author name of a comment or submission, as training spells it."""
         return thing.author.name if thing.author else "[deleted]"
 
-    def _submission_turn(self, submission) -> Tuple[str, str]:
+    def _submission_turn(self, submission) -> tuple[str, str]:
         """
         Render a submission as one thread turn.
 
@@ -205,7 +202,7 @@ class RedditBot:
         model never trained on degrades every reply and raises nothing.
         """
 
-        turns: List[Tuple[str, str]] = []
+        turns: list[tuple[str, str]] = []
         current = comment
 
         # Walk up to the parents, newest last.
@@ -224,7 +221,7 @@ class RedditBot:
                     turns.insert(0, self._submission_turn(parent))
                     break
             except Exception as e:
-                logger.warning(f"Error getting parent: {e}")
+                logger.warning("Error getting parent: %s", e)
                 break
 
         # The comment being replied to closes the thread.
@@ -243,7 +240,7 @@ class RedditBot:
         if self.available_users:
             selected = self.user_selector.select_user(context, self.available_users)
             if selected:
-                logger.info(f"Selected user: {selected}")
+                logger.info("Selected user: %s", selected)
                 return selected
 
         return DEFAULT_USERNAME
@@ -254,11 +251,11 @@ class RedditBot:
         try:
             # Get context
             context = self.get_comment_context(comment)
-            logger.info(f"\nContext:\n{context}\n")
+            logger.info("\nContext:\n%s\n", context)
 
             # Select user
             username = self.select_user_for_context(context)
-            logger.info(f"Responding as: {username}")
+            logger.info("Responding as: %s", username)
 
             # Generate response
             response = self.bot_inference.generate_response(
@@ -269,7 +266,7 @@ class RedditBot:
                 top_p=self.inference_config.get("top_p", 0.9),
             )
 
-            logger.info(f"Generated response: {response}")
+            logger.info("Generated response: %s", response)
 
             # Add disclaimer
             disclaimer = f"\n\n---\n^(I'm a bot mimicking {username}'s style. Beep boop! [bot])"
@@ -282,10 +279,10 @@ class RedditBot:
             self._mark_processed(comment.id)
             self.last_reply_time = time.time()
 
-            logger.info(f"Posted reply to comment {comment.id}")
+            logger.info("Posted reply to comment %s", comment.id)
 
         except Exception as e:
-            logger.error(f"Error posting reply: {e}")
+            logger.error("Error posting reply: %s", e)
 
     def monitor_comments(self, monitor_mentions: bool = True):
         """
@@ -312,19 +309,19 @@ class RedditBot:
 
                 try:
                     if self.should_respond(comment):
-                        logger.info(f"\nProcessing comment {comment.id} by {comment.author}")
+                        logger.info("\nProcessing comment %s by %s", comment.id, comment.author)
                         self.generate_and_post_reply(comment)
                     else:
                         self._mark_processed(comment.id)
 
                 except Exception as e:
-                    logger.error(f"Error processing comment: {e}")
+                    logger.error("Error processing comment: %s", e)
                     continue
 
         except KeyboardInterrupt:
             logger.info("Bot stopped by user")
         except Exception as e:
-            logger.error(f"Fatal error: {e}")
+            logger.error("Fatal error: %s", e)
             raise
 
     def _poll_mentions_if_due(self):
@@ -336,7 +333,7 @@ class RedditBot:
         try:
             self.reply_to_mentions()
         except Exception as e:
-            logger.error(f"Error polling mentions: {e}")
+            logger.error("Error polling mentions: %s", e)
 
     def reply_to_mentions(self):
         """
@@ -354,10 +351,10 @@ class RedditBot:
             if self._is_processed(mention.id):
                 continue
             try:
-                logger.info(f"Processing mention from {mention.author}")
+                logger.info("Processing mention from %s", mention.author)
                 self.generate_and_post_reply(mention)
             except Exception as e:
-                logger.error(f"Error replying to mention: {e}")
+                logger.error("Error replying to mention: %s", e)
             finally:
                 # Mark either way: a mention that failed once will fail again
                 # on every poll, and retrying it forever starves the stream.
@@ -366,11 +363,11 @@ class RedditBot:
     def run(self, monitor_mentions: bool = True):
         """Run the bot"""
 
-        logger.info(f"Starting Reddit bot for r/{self.subreddit.display_name}")
-        logger.info(f"Trigger keywords: {self.trigger_keywords or 'None (all comments)'}")
-        logger.info(f"Reply probability: {self.reply_probability}")
+        logger.info("Starting Reddit bot for r/%s", self.subreddit.display_name)
+        logger.info("Trigger keywords: %s", self.trigger_keywords or 'None (all comments)')
+        logger.info("Reply probability: %s", self.reply_probability)
         if monitor_mentions:
-            logger.info(f"Mention poll interval: {self.mention_poll_seconds}s")
+            logger.info("Mention poll interval: %ss", self.mention_poll_seconds)
 
         self.monitor_comments(monitor_mentions=monitor_mentions)
 

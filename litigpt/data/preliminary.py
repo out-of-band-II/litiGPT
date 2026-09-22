@@ -15,12 +15,12 @@ so we never hold the full dataset in memory.
 import io
 import json
 import logging
+from collections.abc import Generator
+from pathlib import Path
+
 import polars as pl
 import pyarrow.parquet as pq
-
 import zstandard as zstd
-from pathlib import Path
-from typing import Generator
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ def _strip_row(row: dict, cols: set[str] = COLS_TO_KEEP) -> dict:
 
 def _iter_jsonl(filepath: str, cols: set[str] = COLS_TO_KEEP) -> Generator[dict, None, None]:
     """Yield stripped JSON objects from a plain JSONL file, skipping bad lines."""
-    with open(filepath, 'r', encoding='utf-8') as f:
+    with open(filepath, encoding='utf-8') as f:
         for i, line in enumerate(f, 1):
             line = line.strip()
             if not line:
@@ -71,7 +71,7 @@ def _iter_jsonl(filepath: str, cols: set[str] = COLS_TO_KEEP) -> Generator[dict,
             try:
                 yield _strip_row(json.loads(line), cols)
             except json.JSONDecodeError as e:
-                logger.warning(f"Skipping malformed line {i}: {e}")
+                logger.warning("Skipping malformed line %s: %s", i, e)
 
 
 def _iter_zstd(filepath: str, condition=None, cols: set[str] = COLS_TO_KEEP) -> Generator[dict, None, None]:
@@ -88,12 +88,12 @@ def _iter_zstd(filepath: str, condition=None, cols: set[str] = COLS_TO_KEEP) -> 
                 try:
                     obj = json.loads(line)
                 except json.JSONDecodeError as e:
-                    logger.warning(f"Skipping malformed line {i}: {e}")
+                    logger.warning("Skipping malformed line %s: %s", i, e)
                     continue
                 if condition is None or condition(obj):
                     count += 1
                     if count % 10_000 == 0:
-                        logger.info(f"{count} rows extracted.")
+                        logger.info("%s rows extracted.", count)
                     yield _strip_row(obj, cols)
 
 
@@ -135,7 +135,7 @@ def process_reddit_jsonl_to_parquet(
 
     # Fixed schema: all kept columns as Utf8, so every batch matches.
     sorted_cols = sorted(cols)
-    fixed_schema = pl.Schema({col: pl.Utf8 for col in sorted_cols})
+    fixed_schema = pl.Schema(dict.fromkeys(sorted_cols, pl.Utf8))
 
     writer: pq.ParquetWriter | None = None
     total_rows = 0
@@ -172,7 +172,7 @@ def process_reddit_jsonl_to_parquet(
             if len(batch) >= batch_size:
                 writer = _flush_batch(batch, writer)
                 total_rows += len(batch)
-                logger.info(f"Written batch ({len(batch)} rows, {total_rows} total)")
+                logger.info("Written batch (%s rows, %s total)", len(batch), total_rows)
                 batch = []
 
         if batch:
@@ -186,7 +186,7 @@ def process_reddit_jsonl_to_parquet(
         raise ValueError(f"No valid rows found in {input_file}")
 
     file_size_mb = Path(output_file).stat().st_size / (1024 * 1024)
-    logger.info(f"Saved {total_rows} records to {output_file} ({file_size_mb:.2f} MB)")
+    logger.info("Saved %s records to %s (%.2f MB)", total_rows, output_file, file_size_mb)
 
     # Return a lightweight reference - read back from parquet (lazy scan, no full load)
     return pl.scan_parquet(output_file).head(5).collect()
@@ -208,20 +208,20 @@ def convert_all_reddit_data(raw_dir: str = "data/raw"):
     files = list(raw_path.glob("*.jsonl")) + list(raw_path.glob("*.zst"))
 
     if not files:
-        logger.warning(f"No .jsonl or .zst files found in {raw_dir}")
+        logger.warning("No .jsonl or .zst files found in %s", raw_dir)
         return
 
     for source_file in files:
         parquet_file = source_file.with_suffix('.parquet')
         cols = _infer_cols(source_file.name)
-        logger.info(f"Processing: {source_file.name} (cols={sorted(cols)})")
+        logger.info("Processing: %s (cols=%s)", source_file.name, sorted(cols))
         try:
             preview = process_reddit_jsonl_to_parquet(
                 str(source_file), str(parquet_file), cols=cols,
             )
-            logger.info(f"  Columns: {preview.columns}")
+            logger.info("  Columns: %s", preview.columns)
         except Exception as e:
-            logger.error(f"Error converting {source_file.name}: {e}")
+            logger.error("Error converting %s: %s", source_file.name, e)
 
 
 if __name__ == "__main__":

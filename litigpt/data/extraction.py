@@ -4,10 +4,10 @@ Module 1: Data Extraction (Polars Version)
 
 import json
 import logging
-import polars as pl
-from pathlib import Path
-from typing import Dict, List, Optional
 from argparse import ArgumentParser
+from pathlib import Path
+
+import polars as pl
 
 logger = logging.getLogger(__name__)
 
@@ -21,16 +21,15 @@ class RedditDataExtractor:
 
         if filepath.suffix == '.parquet':
             return pl.read_parquet(filepath)
-        elif filepath.suffix == '.jsonl':
+        if filepath.suffix == '.jsonl':
             return pl.read_ndjson(filepath, infer_schema_length=None)
-        else:
-            raise ValueError(f"Unsupported format: {filepath.suffix}")
+        raise ValueError(f"Unsupported format: {filepath.suffix}")
 
     def select_top_users(self,
                          comments: pl.DataFrame,
                          n: int,
-                         exclude: Optional[List[str]] = None,
-                         min_comments: int = 100) -> List[str]:
+                         exclude: list[str] | None = None,
+                         min_comments: int = 100) -> list[str]:
         """
         Pick the N most prolific authors, skipping bots and deleted accounts.
 
@@ -65,8 +64,8 @@ class RedditDataExtractor:
                          username: str,
                          comments_file: str = "comments.jsonl",
                          posts_file: str = "submissions.jsonl",
-                         comments: Optional[pl.DataFrame] = None,
-                         posts: Optional[pl.DataFrame] = None) -> pl.DataFrame:
+                         comments: pl.DataFrame | None = None,
+                         posts: pl.DataFrame | None = None) -> pl.DataFrame:
         """
         Extract one user's comments and posts.
 
@@ -91,12 +90,12 @@ class RedditDataExtractor:
         return user_data
 
     def extract_multiple_users(self,
-                               usernames: Optional[List[str]] = None,
+                               usernames: list[str] | None = None,
                                comments_file: str = "comments.jsonl",
                                posts_file: str = "submissions.jsonl",
                                min_comments_per_user: int = 100,
                                top_n: int = 0,
-                               exclude_authors: Optional[List[str]] = None) -> Dict[str, pl.DataFrame]:
+                               exclude_authors: list[str] | None = None) -> dict[str, pl.DataFrame]:
         """
         Extract data for a cohort of users.
 
@@ -152,10 +151,10 @@ class RedditDataExtractor:
         else:
             data.write_ndjson(output_path)
 
-        logger.info(f"Saved data to {output_path}")
+        logger.info("Saved data to %s", output_path)
 
     def save_multi_user_data(self,
-                            users_data: Dict[str, pl.DataFrame],
+                            users_data: dict[str, pl.DataFrame],
                             output_dir: str = "data/processed"):
         """Save multi-user data"""
         output_path = Path(output_dir)
@@ -165,7 +164,7 @@ class RedditDataExtractor:
         for username, data in users_data.items():
             user_file = output_path / f"{username}_data.parquet"
             data.write_parquet(user_file, compression='snappy')
-            logger.info(f"Saved {username}: {user_file}")
+            logger.info("Saved %s: %s", username, user_file)
 
         # Metadata
         metadata = {
@@ -184,9 +183,9 @@ class RedditDataExtractor:
         with open(metadata_file, 'w') as f:
             json.dump(metadata, f, indent=2)
 
-        logger.info(f"Metadata saved: {metadata_file}")
+        logger.info("Metadata saved: %s", metadata_file)
 
-    def build_conversation_threads(self, all_data_pl: pl.DataFrame) -> Dict[str, List[Dict]]:
+    def build_conversation_threads(self, all_data_pl: pl.DataFrame) -> dict[str, list[dict]]:
         """Build conversation threads from all subreddit data"""
 
         all_data = all_data_pl.to_dicts()
@@ -204,7 +203,7 @@ class RedditDataExtractor:
                 try:
                     parent_id = pid.split('_')[-1]
                 except (AttributeError, ValueError):
-                    logger.error(f"Error processing parent_id for {item}")
+                    logger.error("Error processing parent_id for %s", item)
                     continue
                 if parent_id not in comments_by_parent:
                     comments_by_parent[parent_id] = []
@@ -218,14 +217,14 @@ class RedditDataExtractor:
             'posts_by_id': posts_by_id
         }
 
-    def get_context_for_comment(self, comment: Dict, thread_data: Dict,
-                                max_context: int = 5) -> List[Dict]:
+    def get_context_for_comment(self, comment: dict, thread_data: dict,
+                                max_context: int = 5) -> list[dict]:
         """Get parent comments/posts for context"""
         return get_context_for_comment(comment, thread_data, max_context)
 
 
-def get_context_for_comment(comment: Dict, thread_data: Dict,
-                            max_context: int = 5) -> List[Dict]:
+def get_context_for_comment(comment: dict, thread_data: dict,
+                            max_context: int = 5) -> list[dict]:
     """Get parent comments/posts for context (standalone version)"""
     context = []
     current = comment

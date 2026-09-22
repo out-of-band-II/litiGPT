@@ -32,12 +32,12 @@ import math
 import random
 import re
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
 
-from litigpt.prompts import render_thread, DEFAULT_HUMAN_HANDLE
+from litigpt.prompts import DEFAULT_HUMAN_HANDLE, render_thread
 
 logger = logging.getLogger(__name__)
 
@@ -66,10 +66,10 @@ class BlindRound:
 
     round_id: str
     secret: str
-    choices: List[str]
+    choices: list[str]
     mode: str
     started_at: str
-    turns: List[Dict[str, str]] = field(default_factory=list)
+    turns: list[dict[str, str]] = field(default_factory=list)
     guessed: bool = False
     self_id_attempts: int = 0
 
@@ -86,7 +86,7 @@ class BlindRound:
 class Scoreboard:
     """Completed rounds for this session, plus any replayed from the log."""
 
-    records: List[dict] = field(default_factory=list)
+    records: list[dict] = field(default_factory=list)
 
 
 # ----------------------------------------------------------------------
@@ -98,7 +98,7 @@ def mask_self_reference(
     text: str,
     username: str,
     placeholder: str = NAME_PLACEHOLDER,
-) -> Tuple[str, bool]:
+) -> tuple[str, bool]:
     """
     Redact a persona's own name from its output.
 
@@ -161,10 +161,10 @@ class OracleResponder:
 
     kind = "oracle"
 
-    def __init__(self, samples: Dict[str, List[str]], rng: random.Random):
+    def __init__(self, samples: dict[str, list[str]], rng: random.Random):
         self.samples = samples
         self.rng = rng
-        self._used: Dict[str, set] = {}
+        self._used: dict[str, set] = {}
 
     def __call__(self, secret: str, context: str, temperature: float,
                  max_tokens: int) -> str:
@@ -233,10 +233,10 @@ class BlindEvalInterface:
         base_model: str,
         available_users: Sequence[str],
         log_path: str = "data/eval/blind_eval.jsonl",
-        reference_jsonl: Optional[str] = None,
+        reference_jsonl: str | None = None,
         attributor=None,
         load_in_4bit: bool = True,
-        seed: Optional[int] = None,
+        seed: int | None = None,
         source: str = "model",
         responder=None,
     ):
@@ -261,7 +261,7 @@ class BlindEvalInterface:
         # Real comments. Used after the reveal so the guesser can calibrate
         # against what the persona actually sounds like, and as the source of
         # replies in oracle mode.
-        self.reference_samples: Dict[str, List[str]] = {}
+        self.reference_samples: dict[str, list[str]] = {}
         if reference_jsonl and Path(reference_jsonl).exists():
             self.reference_samples = self._load_reference_samples(reference_jsonl)
 
@@ -296,10 +296,10 @@ class BlindEvalInterface:
     # Setup helpers
     # ------------------------------------------------------------------
 
-    def _load_reference_samples(self, path: str, per_user: int = 40) -> Dict[str, List[str]]:
+    def _load_reference_samples(self, path: str, per_user: int = 40) -> dict[str, list[str]]:
         from litigpt.eval.attribution import load_labelled_responses
 
-        samples: Dict[str, List[str]] = {}
+        samples: dict[str, list[str]] = {}
         try:
             for username, response in load_labelled_responses(
                 path, restrict_to=self.available_users
@@ -311,7 +311,7 @@ class BlindEvalInterface:
             logger.warning("Could not load reference samples from %s: %s", path, e)
         return samples
 
-    def load_prior_rounds(self) -> List[dict]:
+    def load_prior_rounds(self) -> list[dict]:
         """
         Replay earlier rounds for this same adapter from the log, so the
         scoreboard reflects everything judged against this model rather than
@@ -322,7 +322,7 @@ class BlindEvalInterface:
 
         records = []
         try:
-            with open(self.log_path, "r", encoding="utf-8") as fh:
+            with open(self.log_path, encoding="utf-8") as fh:
                 for line in fh:
                     line = line.strip()
                     if not line:
@@ -360,7 +360,7 @@ class BlindEvalInterface:
             secret=secret,
             choices=choices,
             mode=mode,
-            started_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            started_at=datetime.now(UTC).isoformat(timespec="seconds"),
         )
 
     def build_context(self, round_state: BlindRound, message: str, human_handle: str,
@@ -374,7 +374,7 @@ class BlindEvalInterface:
         exactly as it did in training. This string is a prompt, not output — it
         is never rendered to the browser before the reveal.
         """
-        turns: List[Tuple[str, str]] = []
+        turns: list[tuple[str, str]] = []
         for turn in round_state.turns[-context_turns:]:
             turns.append((human_handle, turn["user"]))
             turns.append((round_state.secret, turn.get("bot_raw", "")))
@@ -389,7 +389,7 @@ class BlindEvalInterface:
         temperature: float,
         max_tokens: int,
         mask_name: bool,
-    ) -> Tuple[str, str]:
+    ) -> tuple[str, str]:
         """Generate one reply. Returns (raw, displayed)."""
         context = self.build_context(round_state, message, human_handle)
 
@@ -445,7 +445,7 @@ class BlindEvalInterface:
                 }
 
         return {
-            "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
             "round_id": round_state.round_id,
             "model_path": self.model_path,
             "base_model": self.base_model,
@@ -499,17 +499,21 @@ class BlindEvalInterface:
             "",
             verdict,
             "",
-            f"La tua risposta: {record['guess'] or '-'}"
-            f" | {record['n_choices']} opzioni (caso: {record['chance']:.1%})"
-            f" | {record['n_turns']} scambi"
-            f" | sicurezza {record['confidence']}/5",
+            (
+                f"La tua risposta: {record['guess'] or '-'}"
+                f" | {record['n_choices']} opzioni (caso: {record['chance']:.1%})"
+                f" | {record['n_turns']} scambi"
+                f" | sicurezza {record['confidence']}/5"
+            ),
         ]
 
         if record["self_id_attempts"]:
             lines += [
                 "",
-                f"Il modello ha provato a dire il proprio nome "
-                f"{record['self_id_attempts']}x — nascosto durante la chat.",
+                (
+                    f"Il modello ha provato a dire il proprio nome "
+                    f"{record['self_id_attempts']}x — nascosto durante la chat."
+                ),
             ]
 
         machine = record.get("machine")
@@ -519,8 +523,10 @@ class BlindEvalInterface:
                 "",
                 "---",
                 "",
-                f"**Il classificatore** ha detto **{machine['top1']}** "
-                f"({machine['confidence']:.0%}) — {mark}.",
+                (
+                    f"**Il classificatore** ha detto **{machine['top1']}** "
+                    f"({machine['confidence']:.0%}) — {mark}."
+                ),
             ]
             if machine.get("rank_of_truth"):
                 lines.append(
@@ -547,7 +553,7 @@ class BlindEvalInterface:
                 "raggruppato per numero di opzioni."
             )
 
-        groups: Dict[Tuple[str, int], List[dict]] = {}
+        groups: dict[tuple[str, int], list[dict]] = {}
         for record in board.records:
             key = (record.get("source", "model"), record["n_choices"])
             groups.setdefault(key, []).append(record)
@@ -557,7 +563,7 @@ class BlindEvalInterface:
         lines = ["| Fonte | Opzioni | Round | Top-1 | Top-3 | Caso | Verdetto |",
                  "|---|---|---|---|---|---|---|"]
 
-        accuracy: Dict[Tuple[str, int], float] = {}
+        accuracy: dict[tuple[str, int], float] = {}
         for key in sorted(groups, key=lambda k: (k[1], k[0])):
             source, n_choices = key
             records = groups[key]
@@ -586,9 +592,11 @@ class BlindEvalInterface:
             retained = (got - chance) / headroom if headroom > 0 else 0.0
             lines += [
                 "",
-                f"**A {n_choices} opzioni** il modello arriva a {got:.0%} contro "
-                f"un ceiling di {ceiling:.0%} sui commenti reali — trattiene "
-                f"circa il {max(0.0, retained):.0%} del segnale identificabile.",
+                (
+                    f"**A {n_choices} opzioni** il modello arriva a {got:.0%} contro "
+                    f"un ceiling di {ceiling:.0%} sui commenti reali — trattiene "
+                    f"circa il {max(0.0, retained):.0%} del segnale identificabile."
+                ),
             ]
 
         machine_records = [r for r in board.records if r.get("machine")]
@@ -597,14 +605,16 @@ class BlindEvalInterface:
             human_correct = sum(1 for r in machine_records if r["correct"])
             lines += [
                 "",
-                f"**Tu vs classificatore** sugli stessi {len(machine_records)} round: "
-                f"tu {human_correct}, lui {machine_correct}.",
+                (
+                    f"**Tu vs classificatore** sugli stessi {len(machine_records)} round: "
+                    f"tu {human_correct}, lui {machine_correct}."
+                ),
             ]
 
         # Per-persona breakdown, only once it would say something. The two
         # lists are split down the middle rather than taken as head and tail,
         # so they can never name the same persona as both best and worst.
-        per_user: Dict[str, List[bool]] = {}
+        per_user: dict[str, list[bool]] = {}
         for record in board.records:
             per_user.setdefault(record["secret"], []).append(record["correct"])
 
@@ -760,8 +770,10 @@ class BlindEvalInterface:
                     "",
                     gr.update(interactive=True),
                     3,
-                    f"**Round {n_done + 1}** — {state.n_choices} opzioni. "
-                    f"Chatta, poi indovina.",
+                    (
+                        f"**Round {n_done + 1}** — {state.n_choices} opzioni. "
+                        f"Chatta, poi indovina."
+                    ),
                 )
 
             def on_send(message, history, state, handle, temp, max_tok, mask):

@@ -57,6 +57,7 @@ class PipelineRunner:
         logger.info("-" * 60)
 
         import polars as pl
+
         from litigpt.model_utils import load_user_metadata
 
         data = self.config.data
@@ -124,13 +125,15 @@ class PipelineRunner:
 
     def run_training(self):
         """Step 3: Fine-tune the model"""
-        from litigpt.training.trainer import RedditModelTrainer
-        from litigpt.training.tracking import MLflowTracker
-        import mlflow
-        import torch
-        import jsonlines
         import os
         from collections import Counter
+
+        import jsonlines
+        import mlflow
+        import torch
+
+        from litigpt.training.tracking import MLflowTracker
+        from litigpt.training.trainer import RedditModelTrainer
 
         logger.info("[3/5] TRAINING MODEL")
         logger.info("-" * 60)
@@ -207,7 +210,7 @@ class PipelineRunner:
                 backends.append("tensorboard")
             except ImportError:
                 pass
-            report_to = backends if backends else "none"
+            report_to = backends or "none"
             logger.info("Reporting to: %s", report_to)
             logger.info("Base model: %s", model_cfg.base_model)
             logger.info("Output: %s", model_cfg.output_dir)
@@ -257,10 +260,10 @@ class PipelineRunner:
 
     def run_evaluation(self):
         """Step 4: Test the model interactively"""
+        import os
+
         from litigpt.inference.generator import RedditBotInference
         from litigpt.training.tracking import MLflowTracker
-        import mlflow
-        import os
 
         logger.info("[4/5] EVALUATING MODEL")
         logger.info("-" * 60)
@@ -310,8 +313,11 @@ class PipelineRunner:
             tracker.start_run(run_name="evaluation_samples")
             tracker.log_sample_outputs(samples)
             tracker.end_run()
-        except Exception:
-            pass  # MLflow is optional for evaluation
+        except Exception as exc:
+            # MLflow is optional here, but a bare pass also swallows a bad
+            # tracking URI, which then looks like the run simply logged
+            # nothing. Debug keeps it out of normal output and findable.
+            logger.debug("Skipped MLflow logging of eval samples: %s", exc)
 
         # Interactive mode option
         print("\nWould you like to test interactively? (y/n): ", end="")
@@ -325,7 +331,7 @@ class PipelineRunner:
     def run_deployment(self):
         """Step 5: Deploy bot to Reddit"""
         from litigpt.deployment.reddit_bot import RedditBot
-        from litigpt.inference.classifier import RandomUserSelector, KeywordUserSelector
+        from litigpt.inference.classifier import KeywordUserSelector, RandomUserSelector
 
         logger.info("[5/5] DEPLOYING BOT")
         logger.info("-" * 60)
@@ -384,7 +390,7 @@ class PipelineRunner:
             self.run_data_extraction()
 
             # Step 2: Preprocess
-            train_size, val_size = self.run_preprocessing()
+            train_size, _val_size = self.run_preprocessing()
 
             if train_size < 50:
                 logger.warning("Very small training set (%d). Model may not learn effectively.", train_size)
@@ -409,8 +415,8 @@ class PipelineRunner:
 
         except KeyboardInterrupt:
             logger.info("Pipeline interrupted by user.")
-        except Exception as e:
-            logger.error("Error: %s", e, exc_info=True)
+        except Exception:
+            logger.exception("Pipeline failed")
 
 def main():
     parser = argparse.ArgumentParser(description="Reddit Chatbot Pipeline")

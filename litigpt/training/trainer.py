@@ -7,11 +7,12 @@ import logging
 import os
 
 import torch
-from peft import LoraConfig, get_peft_model
-from trl import SFTTrainer, SFTConfig
 from datasets import load_dataset
+from peft import LoraConfig, get_peft_model
+from trl import SFTConfig, SFTTrainer
 
-from litigpt.model_utils import load_model_and_tokenizer as _load_model, DEFAULT_BASE_MODEL
+from litigpt.model_utils import DEFAULT_BASE_MODEL
+from litigpt.model_utils import load_model_and_tokenizer as _load_model
 
 logger = logging.getLogger(__name__)
 
@@ -107,9 +108,9 @@ class RedditModelTrainer:
         self.compute_dtype = compute_dtype
         self.use_bf16 = compute_dtype == torch.bfloat16
         return model, tokenizer
-    
+
     def setup_lora(self, model, r: int = 16, lora_alpha: int = 32,
-                   lora_dropout: float = 0.05, target_modules: list = None):
+                   lora_dropout: float = 0.05, target_modules: list | None = None):
         """
         Configure LoRA parameters.
 
@@ -144,10 +145,10 @@ class RedditModelTrainer:
         model.print_trainable_parameters()
 
         return model
-    
+
     def prepare_dataset(self, data_dir: str = "data/training"):
         """Load and prepare dataset"""
-        
+
         # Load datasets
         dataset = load_dataset(
             "json",
@@ -156,12 +157,12 @@ class RedditModelTrainer:
                 "validation": f"{data_dir}/val.jsonl"
             }
         )
-        
+
         logger.info("Train samples: %d", len(dataset['train']))
         logger.info("Validation samples: %d", len(dataset['validation']))
-        
+
         return dataset
-    
+
     @staticmethod
     def split_prompt_completion(example):
         """
@@ -224,7 +225,7 @@ class RedditModelTrainer:
                     max_seq_length,
                 )
         return dataset
-    
+
     def train(self,
               data_dir: str = "data/training",
               num_epochs: int = 3,
@@ -241,7 +242,7 @@ class RedditModelTrainer:
               lora_r: int = 16,
               lora_alpha: int = 32,
               lora_dropout: float = 0.05,
-              lora_target_modules: list = None,
+              lora_target_modules: list | None = None,
               early_stopping_patience: int = 3,
               early_stopping_threshold: float = 0.005,
               report_to: str = "none"):
@@ -255,7 +256,7 @@ class RedditModelTrainer:
             model, r=lora_r, lora_alpha=lora_alpha,
             lora_dropout=lora_dropout, target_modules=lora_target_modules,
         )
-        
+
         # Prepare dataset
         dataset = self.prepare_dataset(data_dir)
 
@@ -346,7 +347,7 @@ class RedditModelTrainer:
             processing_class=tokenizer,
             callbacks=callbacks,
         )
-        
+
         # Train
         logger.info("Starting training...")
         trainer.train()
@@ -355,13 +356,13 @@ class RedditModelTrainer:
         logger.info("Saving model to %s", self.output_dir)
         trainer.save_model(self.output_dir)
         tokenizer.save_pretrained(self.output_dir)
-        
+
         return trainer
-    
-    def merge_and_save_full_model(self, adapter_path: str = None):
+
+    def merge_and_save_full_model(self, adapter_path: str | None = None):
         """Merge LoRA adapters with base model and save"""
-        from transformers import AutoModelForCausalLM, AutoTokenizer
         from peft import PeftModel
+        from transformers import AutoModelForCausalLM, AutoTokenizer
 
         if adapter_path is None:
             adapter_path = self.output_dir

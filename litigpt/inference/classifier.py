@@ -7,7 +7,7 @@ which user persona to respond as, given a conversation context.
 
 import logging
 import random
-from typing import Dict, List, Optional, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class UserSelector(Protocol):
     """Protocol for user selection strategies."""
 
-    def select_user(self, context: str, available_users: List[str]) -> Optional[str]:
+    def select_user(self, context: str, available_users: list[str]) -> str | None:
         """Select a user to respond as, given conversation context.
 
         Args:
@@ -32,7 +32,7 @@ class UserSelector(Protocol):
 class RandomUserSelector:
     """Selects a random user from available users."""
 
-    def select_user(self, context: str, available_users: List[str]) -> Optional[str]:
+    def select_user(self, context: str, available_users: list[str]) -> str | None:
         if not available_users:
             return None
         return random.choice(available_users)
@@ -44,7 +44,7 @@ class KeywordUserSelector:
     Routes to the user whose keywords best match the conversation context.
     """
 
-    def __init__(self, user_keywords: Dict[str, List[str]]):
+    def __init__(self, user_keywords: dict[str, list[str]]):
         """
         Args:
             user_keywords: Dict mapping username to list of keywords they discuss.
@@ -60,7 +60,7 @@ class KeywordUserSelector:
             for username, keywords in user_keywords.items()
         }
 
-    def select_user(self, context: str, available_users: List[str]) -> Optional[str]:
+    def select_user(self, context: str, available_users: list[str]) -> str | None:
         """Select user based on keyword matching against available users."""
         context_lower = context.lower()
 
@@ -74,7 +74,7 @@ class KeywordUserSelector:
 
         return max(scores.items(), key=lambda x: x[1])[0]
 
-    def get_matching_keywords(self, context: str, username: str) -> List[str]:
+    def get_matching_keywords(self, context: str, username: str) -> list[str]:
         """Utility: show which keywords matched for a user."""
         context_lower = context.lower()
         keywords = self.user_keywords.get(username, [])
