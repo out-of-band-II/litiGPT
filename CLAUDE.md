@@ -31,7 +31,8 @@ contracts are in [architecture_diagram.md](architecture_diagram.md).
 - **`eval/`** — `attribution.py` (TF-IDF + logistic regression authorship)
 - **`deployment/`** — `reddit_bot.py`
 - **`prompts.py`** — the one definition of prompts and thread format
-- **`model_utils.py`** — loading, quantization, dtype detection
+- **`manifest.py`** — what an adapter was trained on, stored inside it
+- **`model_utils.py`** — loading, quantization, dtype detection, persona list
 - **`config.py`** — Pydantic schema
 - **`pipeline.py`** — orchestration and every CLI entry point
 
@@ -72,6 +73,17 @@ source. **Add any new thread-rendering module to its `MODULES` list.**
 look healthy. When a fine-tune produces fluent output that does not answer the
 question, check the mask and the adapted modules before blaming model size.
 
+**The adapter must say who it impersonates.** It used to record nothing about
+its data, and the interfaces took their persona list from
+`data/processed/users_metadata.json`, which reflects the last extraction on
+the machine running the app. The MLflow `users` tag read
+`data.target_usernames`, which `top_n_users` selection leaves empty, so the
+30-user run was tagged `''`. Now every adapter directory holds a
+`litigpt_manifest.json` (`litigpt/manifest.py`), and the interfaces read their
+users from it through `model_utils.resolve_available_users`.
+`tests/test_manifest.py` guards against an interface reading the extraction
+list directly.
+
 ## Persona selection is deliberately not learned
 
 `inference/classifier.py` has a `UserSelector` protocol, `RandomUserSelector`,
@@ -85,9 +97,15 @@ evaluation — it does not route.
 
 To add a strategy: one class implementing
 `select_user(context, available_users) -> Optional[str]`, returning `None` to
-fall back to `DEFAULT_USERNAME`; then a branch in `pipeline.run_deployment`
-and a `user_classification.strategy` value. The likely next one reads an
-explicit request out of a mention ("answer as tommyrugby").
+fall back to a random one of `bot.available_users`; then a branch in
+`pipeline.run_deployment` and a `user_classification.strategy` value. The
+likely next one reads an explicit request out of a mention ("answer as
+tommyrugby").
+
+`bot.available_users` is opt-in and required. Deploy refuses to start when it
+is empty or names anyone missing from the adapter's manifest
+(`classifier.check_bot_users`). There is no anonymous fallback: `anonimo` is a
+persona the adapter never trained on, so it posted a blend of every user.
 
 ## Configuration
 

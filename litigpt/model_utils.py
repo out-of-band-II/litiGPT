@@ -216,3 +216,39 @@ def load_user_metadata(processed_dir: str) -> list[str]:
     except (json.JSONDecodeError, KeyError) as e:
         logger.warning("Failed to read user metadata from %s: %s", metadata_path, e)
         return []
+
+
+def resolve_available_users(adapter_path: str | None, processed_dir: str) -> list[str]:
+    """
+    The personas an interface should offer for this adapter.
+
+    The adapter's own manifest wins: it records who the weights were trained
+    on, and it travels with the adapter from wherever training ran.
+    users_metadata.json describes the last extraction on this machine, which
+    is a different thing -- it is used only for adapters that predate the
+    manifest, and a disagreement between the two is logged rather than hidden.
+    """
+    from litigpt.manifest import MANIFEST_FILENAME, load_adapter_users
+
+    trained = load_adapter_users(adapter_path)
+    extracted = load_user_metadata(processed_dir)
+
+    if trained:
+        if extracted and set(extracted) != set(trained):
+            logger.warning(
+                "%s/users_metadata.json lists %d users but the adapter was "
+                "trained on %d; using the adapter's list. Only in extraction: "
+                "%s. Only in adapter: %s.",
+                processed_dir, len(extracted), len(trained),
+                sorted(set(extracted) - set(trained)) or "-",
+                sorted(set(trained) - set(extracted)) or "-",
+            )
+        return trained
+
+    if adapter_path:
+        logger.warning(
+            "%s has no %s; falling back to %s/users_metadata.json, which may "
+            "not match the users this adapter was trained on.",
+            adapter_path, MANIFEST_FILENAME, processed_dir,
+        )
+    return extracted

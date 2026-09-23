@@ -880,7 +880,7 @@ def main():
     import argparse
 
     from litigpt.config import Config
-    from litigpt.model_utils import DEFAULT_BASE_MODEL, load_user_metadata
+    from litigpt.model_utils import DEFAULT_BASE_MODEL, resolve_available_users
 
     parser = argparse.ArgumentParser(
         description="Blind persona evaluation for a multi-user litiGPT adapter"
@@ -941,11 +941,13 @@ def main():
     )
 
     config = Config.from_yaml(args.config)
-    users = load_user_metadata(config.data.processed_dir)
+    # Oracle rounds have no adapter, so they draw from the local extraction.
+    users = resolve_available_users(args.model, config.data.processed_dir)
     if not users:
         raise SystemExit(
-            f"No users found in {config.data.processed_dir}/users_metadata.json. "
-            "Run: python -m litigpt.pipeline --step extract"
+            f"No users found: {args.model or 'the oracle'} has no training "
+            f"manifest and {config.data.processed_dir}/users_metadata.json is "
+            "missing. Run: python -m litigpt.pipeline --step extract"
         )
 
     train_jsonl = str(Path(config.data.training_dir) / "train.jsonl")

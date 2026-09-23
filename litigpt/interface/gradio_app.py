@@ -14,7 +14,7 @@ from litigpt.model_utils import (
     DEFAULT_BASE_MODEL,
     DEFAULT_USERNAME,
     load_model_and_tokenizer,
-    load_user_metadata,
+    resolve_available_users,
 )
 from litigpt.prompts import DEFAULT_HUMAN_HANDLE, build_system_prompt, render_thread
 
@@ -56,9 +56,8 @@ class GradioChatInterface:
         )
         logger.info("Model loaded successfully!")
 
-        # Load user metadata
-        self.available_users: list[str] = load_user_metadata(
-            self.config.data.processed_dir
+        self.available_users: list[str] = resolve_available_users(
+            model_path, self.config.data.processed_dir
         )
 
     def generate_response(self,

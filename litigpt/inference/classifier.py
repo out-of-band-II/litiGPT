@@ -24,9 +24,51 @@ class UserSelector(Protocol):
             available_users: List of usernames the model can impersonate.
 
         Returns:
-            Selected username, or None to fall back to default.
+            Selected username, or None to fall back to a random one of
+            available_users.
         """
         ...
+
+
+def check_bot_users(configured: list[str], trained: list[str]) -> list[str]:
+    """
+    Validate the personas the public bot is allowed to post as.
+
+    The list is opt-in on purpose: the bot writes in real people's styles in
+    public, so each one must be named in bot.available_users. It used to fall
+    back to DEFAULT_USERNAME when the list was empty, which posted as a
+    persona the adapter never trained on -- a blend of every user rather
+    than any one of them -- and said nothing.
+
+    Args:
+        configured: bot.available_users from the config.
+        trained: the adapter's cohort from its manifest; [] if it has none.
+
+    Returns:
+        The configured list, unchanged, if it is usable.
+    """
+    if not configured:
+        raise ValueError(
+            "bot.available_users is empty. The bot only posts as users named "
+            "there explicitly; list the personas it may use"
+            + (f" (the adapter was trained on: {', '.join(trained)})." if trained else ".")
+        )
+
+    if not trained:
+        logger.warning(
+            "The adapter has no training manifest, so the bot's users cannot "
+            "be checked against what it was trained on: %s", ", ".join(configured)
+        )
+        return configured
+
+    unknown = [u for u in configured if u not in trained]
+    if unknown:
+        raise ValueError(
+            f"bot.available_users names users the adapter was not trained on: "
+            f"{', '.join(unknown)}. It would answer as them without having "
+            "learned how they write."
+        )
+    return configured
 
 
 class RandomUserSelector:

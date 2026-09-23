@@ -17,7 +17,6 @@ from litigpt.inference.classifier import RandomUserSelector, UserSelector
 
 # Import inference module
 from litigpt.inference.generator import RedditBotInference
-from litigpt.model_utils import DEFAULT_USERNAME
 from litigpt.prompts import render_thread
 
 logger = logging.getLogger(__name__)
@@ -41,9 +40,10 @@ class RedditBot:
         """
         Initialize Reddit bot.
 
-        The bot always generates responses as a specific user. When multiple
-        users are configured it auto-selects via the user_selector; when a single
-        user (or none) is configured it uses that user for every reply.
+        The bot always generates responses as one of available_users, which
+        must be non-empty: the user_selector picks, and when it has no
+        preference a random one is used. There is no anonymous fallback --
+        see classifier.check_bot_users.
 
         Args:
             model_path: Path to trained model
@@ -54,10 +54,16 @@ class RedditBot:
             reply_probability: Probability of replying to eligible comments
             min_score_threshold: Minimum comment score to respond to
             cooldown_seconds: Seconds between responses
-            available_users: List of users model can impersonate
+            available_users: Users the bot may post as; required
             user_selector: Strategy for selecting which user to respond as
             max_depth: Max parent comments for context
         """
+
+        # Checked before logging in or loading a model, so a missing list
+        # costs nothing. pipeline.run_deployment also checks it against the
+        # adapter's manifest.
+        if not available_users:
+            raise ValueError("RedditBot needs a non-empty available_users list")
 
         # Load environment variables
         load_dotenv()
@@ -76,7 +82,7 @@ class RedditBot:
         )
 
         # User selection
-        self.available_users = available_users or []
+        self.available_users = list(available_users)
         self.user_selector = user_selector or RandomUserSelector()
 
         # Inference settings
@@ -101,7 +107,7 @@ class RedditBot:
         self._last_mention_check = 0
 
         logger.info("Bot initialized for r/%s", subreddit_name)
-        logger.info("Available users: %s", ', '.join(self.available_users) or '(default)')
+        logger.info("Available users: %s", ', '.join(self.available_users))
 
     def _mark_processed(self, comment_id: str):
         """Mark a comment as processed, evicting oldest if at capacity."""
@@ -234,16 +240,17 @@ class RedditBot:
         Select which user to respond as based on context.
 
         Returns:
-            Username to impersonate. Falls back to DEFAULT_USERNAME if
-            no users are configured or the selector returns None.
+            Username to impersonate: the selector's choice, or a random one
+            of available_users when it has none (e.g. no keyword matched).
         """
-        if self.available_users:
-            selected = self.user_selector.select_user(context, self.available_users)
-            if selected:
-                logger.info("Selected user: %s", selected)
-                return selected
+        selected = self.user_selector.select_user(context, self.available_users)
+        if selected in self.available_users:
+            logger.info("Selected user: %s", selected)
+            return selected
 
-        return DEFAULT_USERNAME
+        fallback = random.choice(self.available_users)
+        logger.info("No selector preference; random user: %s", fallback)
+        return fallback
 
     def generate_and_post_reply(self, comment):
         """Generate response and post it"""

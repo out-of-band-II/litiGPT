@@ -5,12 +5,15 @@ Fine-tune model using QLoRA
 
 import logging
 import os
+import shutil
 
 import torch
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model
+from transformers import TrainerCallback
 from trl import SFTConfig, SFTTrainer
 
+from litigpt.manifest import MANIFEST_FILENAME
 from litigpt.model_utils import DEFAULT_BASE_MODEL
 from litigpt.model_utils import load_model_and_tokenizer as _load_model
 
@@ -88,6 +91,23 @@ def validate_target_modules(model, target_modules) -> None:
         "leave it empty to detect them automatically. Training with this "
         "list would silently adapt only part of the network."
     )
+
+
+class ManifestToCheckpoints(TrainerCallback):
+    """
+    Copy output_dir's training manifest into each checkpoint as it is saved.
+
+    When a run dies before its final save, the RunPod watchdog archives the
+    newest checkpoint directory instead of output_dir. Without this, that
+    archive would hold weights and no record of who they impersonate.
+    """
+
+    def on_save(self, args, state, control, **kwargs):
+        source = os.path.join(args.output_dir, MANIFEST_FILENAME)
+        checkpoint = os.path.join(args.output_dir, f"checkpoint-{state.global_step}")
+        if os.path.exists(source) and os.path.isdir(checkpoint):
+            shutil.copy2(source, checkpoint)
+        return control
 
 
 class RedditModelTrainer:
@@ -326,7 +346,7 @@ class RedditModelTrainer:
         # run, about an hour of rented GPU -- to improve eval_loss by 0.0014.
         # The threshold is what makes this work: without it, improvements in
         # the fourth decimal place keep resetting the patience counter.
-        callbacks = []
+        callbacks = [ManifestToCheckpoints()]
         if early_stopping_patience and early_stopping_patience > 0:
             from transformers import EarlyStoppingCallback
             callbacks.append(EarlyStoppingCallback(
@@ -388,56 +408,3 @@ class RedditModelTrainer:
         tokenizer.save_pretrained(output_path)
 
         return output_path
-
-if __name__ == "__main__":
-    # Example usage with MLflow tracking
-    from litigpt.config import Config
-    from litigpt.training.tracking import MLflowTracker
-
-    # Load config
-    config = Config.from_yaml("config.yaml")
-
-    # Initialize MLflow
-    tracker = MLflowTracker(
-        experiment_name="reddit-chatbot-training",
-        tracking_uri=os.getenv("MLFLOW_TRACKING_URI", "file:./mlruns"),
-    )
-
-    # Start run
-    users_label = "_".join(config.data.target_usernames)
-    run_name = f"train_{users_label}"
-    tracker.start_run(run_name=run_name, tags={
-        "model": config.model.base_model,
-        "users": ",".join(config.data.target_usernames),
-    })
-
-    # Log config
-    tracker.log_config(config.model_dump())
-
-    # Initialize trainer
-    trainer = RedditModelTrainer(
-        model_name=config.model.base_model,
-        output_dir=config.model.output_dir,
-    )
-
-    # Train with MLflow logging
-    trainer.train(
-        data_dir=config.data.training_dir,
-        num_epochs=config.training.num_epochs,
-        batch_size=config.training.batch_size,
-        learning_rate=config.training.learning_rate,
-    )
-
-    # Log model
-    tracker.log_model(config.model.output_dir, model_name="reddit_bot")
-
-    # End run
-    tracker.end_run()
-
-    logger.info("View results at: %s", tracker.tracking_uri)
-
-    # Optional: merge LoRA adapters into the base model weights to produce a
-    # single standalone model (no adapter files). Useful for Ollama/vLLM
-    # deployments that don't support PEFT adapters natively. Costs extra VRAM
-    # and disk space; skip unless you need a self-contained model file.
-    # trainer.merge_and_save_full_model()

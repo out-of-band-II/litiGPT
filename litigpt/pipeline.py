@@ -126,7 +126,6 @@ class PipelineRunner:
     def run_training(self):
         """Step 3: Fine-tune the model"""
         import os
-        from collections import Counter
 
         import jsonlines
         import mlflow
@@ -138,9 +137,21 @@ class PipelineRunner:
         logger.info("[3/5] TRAINING MODEL")
         logger.info("-" * 60)
 
+        from litigpt.manifest import build_manifest, finalize_manifest, write_manifest
+
         model_cfg = self.config.model
         training_cfg = self.config.training
         data_cfg = self.config.data
+
+        # Record who this adapter will impersonate, and from what, before any
+        # GPU time is spent. It goes inside output_dir so it travels with the
+        # adapter; the trainer copies it into each checkpoint as well.
+        manifest = build_manifest(
+            self.config, self.config_path, provenance="recorded at training time"
+        )
+        manifest_path = write_manifest(manifest, model_cfg.output_dir)
+        cohort = manifest["users"]
+        logger.info("Cohort: %d users, recorded in %s", len(cohort), manifest_path)
 
         # Initialize MLflow
         tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "file:./mlruns")
@@ -149,13 +160,17 @@ class PipelineRunner:
             tracking_uri=tracking_uri,
         )
 
+        # The cohort comes from the training data, not data.target_usernames:
+        # with top_n selection that list is empty, which once left a 30-user
+        # run tagged users='' and named train__phi-3-mini-4k-instruct.
         model_short = model_cfg.base_model.split("/")[-1]
-        run_name = f"train_{'_'.join(data_cfg.target_usernames)}_{model_short}"
+        cohort_label = "_".join(cohort) if len(cohort) <= 3 else f"{len(cohort)}users"
         tracker.start_run(
-            run_name=run_name,
+            run_name=f"train_{cohort_label}_{model_short}",
             tags={
                 "model": model_cfg.base_model,
-                "users": ",".join(data_cfg.target_usernames),
+                "users": ",".join(cohort),
+                "train_sha256": manifest["dataset"]["train"]["sha256"],
             },
         )
 
@@ -166,6 +181,7 @@ class PipelineRunner:
             # Log the active config file as an artifact for exact reproducibility
             if Path(self.config_path).exists():
                 mlflow.log_artifact(self.config_path)
+            mlflow.log_artifact(str(manifest_path))
 
             # Log dataset sizes and data quality metrics
             train_path = Path(data_cfg.training_dir) / "train.jsonl"
@@ -181,15 +197,13 @@ class PipelineRunner:
 
                 # Data quality: response lengths and per-user sample counts
                 response_lengths = []
-                user_counts = Counter()
                 for ex in train_examples:
                     msgs = ex.get("messages", [])
                     if msgs:
                         response_lengths.append(len(msgs[-1].get("content", "")))
-                    user_counts[ex.get("username", "unknown")] += 1
                 if response_lengths:
                     mlflow.log_metric("avg_response_length", sum(response_lengths) / len(response_lengths))
-                for user, count in user_counts.items():
+                for user, count in manifest["examples_per_user"].items():
                     mlflow.log_metric(f"user_{user}_samples", count)
                 mlflow.log_metric("effective_batch_size",
                                   training_cfg.batch_size * training_cfg.gradient_accumulation_steps)
@@ -251,6 +265,9 @@ class PipelineRunner:
             adapter_config = Path(model_cfg.output_dir) / "adapter_config.json"
             if adapter_config.exists():
                 mlflow.log_artifact(str(adapter_config), artifact_path="model")
+
+            finalize_manifest(model_cfg.output_dir)
+            mlflow.log_artifact(str(manifest_path), artifact_path="model")
 
             mlflow.set_tag("model_local_path", model_cfg.output_dir)
             logger.info("Model trained and saved to %s", model_cfg.output_dir)
@@ -331,7 +348,12 @@ class PipelineRunner:
     def run_deployment(self):
         """Step 5: Deploy bot to Reddit"""
         from litigpt.deployment.reddit_bot import RedditBot
-        from litigpt.inference.classifier import KeywordUserSelector, RandomUserSelector
+        from litigpt.inference.classifier import (
+            KeywordUserSelector,
+            RandomUserSelector,
+            check_bot_users,
+        )
+        from litigpt.manifest import load_adapter_users
 
         logger.info("[5/5] DEPLOYING BOT")
         logger.info("-" * 60)
@@ -339,7 +361,14 @@ class PipelineRunner:
         model_cfg = self.config.model
         bot_cfg = self.config.bot
 
+        # Before the confirmation prompt, the Reddit login and the model load.
+        bot_users = check_bot_users(
+            bot_cfg.available_users, load_adapter_users(model_cfg.output_dir)
+        )
+
         logger.info("Target subreddit: r/%s", bot_cfg.subreddit)
+        logger.info("Posting as (random unless the selector prefers one): %s",
+                    ", ".join(bot_users))
         logger.info("Reply probability: %s", bot_cfg.reply_probability)
 
         logger.warning(
@@ -373,7 +402,7 @@ class PipelineRunner:
             reply_probability=bot_cfg.reply_probability,
             min_score_threshold=bot_cfg.min_score_threshold,
             cooldown_seconds=bot_cfg.cooldown_seconds,
-            available_users=bot_cfg.available_users or None,
+            available_users=bot_users,
             user_selector=user_selector,
             inference_config=self.config.inference.model_dump(),
         )

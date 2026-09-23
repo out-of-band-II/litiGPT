@@ -235,7 +235,12 @@ Which persona it answers as comes from `user_classification.strategy`:
 `random` picks from `bot.available_users`, `keyword` routes on topic keywords.
 Both live in [litigpt/inference/classifier.py](litigpt/inference/classifier.py)
 behind a `UserSelector` protocol — `select_user(context, available_users)`
-returning `None` to fall back. A new strategy is one class implementing that.
+returning `None` to fall back to a random one of `bot.available_users`. A new
+strategy is one class implementing that.
+
+`bot.available_users` is required and opt-in: deploy refuses to start when it
+is empty or names anyone the adapter's manifest does not list. The bot posts
+in public in real people's styles, so each one is named deliberately.
 
 There is deliberately no model-based persona router.
 

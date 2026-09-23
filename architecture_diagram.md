@@ -42,9 +42,31 @@ data/raw/*.parquet
 └──────────┬──────────────────────────────┬─────────────────┘
            │                              │
            ▼                              ▼
-   models/<name>/final          litigpt/training/tracking.py
-   adapter_model.safetensors     └─▶ MLflow (SQLite backend)
+   model.output_dir/             litigpt/training/tracking.py
+   adapter_model.safetensors      └─▶ MLflow (SQLite backend)
+   litigpt_manifest.json
 ```
+
+### The training manifest
+
+`litigpt_manifest.json`, from [litigpt/manifest.py](litigpt/manifest.py), is
+written into `model.output_dir` before the model loads. The trainer copies it
+into every checkpoint, and it is completed after the final save. It records:
+
+- the cohort, read from `train.jsonl`, with examples per user
+- sha256 hashes of `train.jsonl` and `val.jsonl`
+- the resolved config
+- the git commit, or null on a pod with no `.git`
+- library versions
+- the modules the safetensors actually contain
+
+It exists because the adapter used to carry no record of who it impersonates.
+Because it sits inside the adapter directory, the RunPod archive picks it up
+with no extra step.
+
+For an adapter trained before the manifest existed, backfill it. The backfill
+refuses if the local data disagrees with the run's MLflow record:
+`python -m litigpt.manifest --model <dir> --config <cfg> --mlflow-db <db>`.
 
 ---
 
@@ -80,12 +102,15 @@ covers preprocessing, the three interfaces, and the Reddit bot.
 ## Serving path
 
 ```
-                    models/<name>/final  +  base model
+                    model.output_dir/  +  base model
                                  │
                                  ▼
                    litigpt/model_utils.py
                    load_model_and_tokenizer
                      4-bit, dtype detection, PEFT merge
+                   resolve_available_users
+                     the adapter's manifest; users_metadata.json
+                     only for adapters that predate it
                                  │
             ┌────────────────────┼────────────────────┐
             ▼                    ▼                    ▼
@@ -131,7 +156,7 @@ subreddit comment stream (skip_existing, pause_after=-1)
         │                     UserSelector protocol:
         │                       RandomUserSelector   pick from available
         │                       KeywordUserSelector  topic -> persona
-        │                       (returns None -> DEFAULT_USERNAME)
+        │                       (returns None -> random from available)
         │                           │
         │                           ▼
         │                   generate, append disclaimer, reply

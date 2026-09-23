@@ -105,6 +105,10 @@ user_classification:
 
 bot:
   subreddit: "test"
+  # Required to deploy: the bot posts only as users named here, never as an
+  # anonymous fallback. Every name must be in the adapter's manifest
+  # (litigpt_manifest.json). Each reply picks one at random unless the
+  # keyword strategy prefers one.
   available_users: []
   trigger_keywords: []      # empty = consider every comment
   reply_probability: 0.2
