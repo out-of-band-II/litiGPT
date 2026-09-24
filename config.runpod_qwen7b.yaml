@@ -1,0 +1,108 @@
+# litiGPT on RunPod, Qwen2.5-7B-Instruct base.
+#
+# config.runpod.yaml with only the base model and output_dir changed, so the
+# result is comparable to the phi-3 v2 adapter on everything but the base.
+# phi-3-mini fit correctly but invented Italian words (*trafficiazione*); a 3.8B
+# English-centric model lacks the vocabulary, which no amount of training on
+# top of it supplies.
+#
+# Smoke-tested on a Secure RTX 3090 (2026-09-24, 2000 examples, 63 steps):
+# 22.9/24GB peak at batch 4 x 8, ~8.6 s/step, ~9 min per full eval. Detected
+# targets: all seven q/k/v/o/gate/up/down_proj, 80.7M trainable. Qwen's
+# tokenizer is denser on this Italian (median 175 tok), and 0.4% of examples
+# drop at 1024.
+#
+#   python -m litigpt.pipeline --step train --config config.runpod_qwen7b.yaml
+
+data:
+  raw_dir: "/workspace/data/raw"
+  submission_filename: "litigi_submissions.parquet"
+  comments_filename: "litigi_comments.parquet"
+  processed_dir: "/workspace/data/processed"
+  training_dir: "/workspace/data/training"
+  # Same 30-persona cohort as config.top30.yaml, selected automatically so it
+  # stays reproducible from the raw dump. This file differs from that one only
+  # in its paths.
+  target_usernames: []
+  top_n_users: 30
+  max_pairs_per_user: 2000
+  exclude_authors: ["[deleted]", "[removed]", "AutoModerator"]
+  strip_quoted_text: true
+  min_comment_length: 10
+  max_comment_length: 512
+  min_score: 1
+
+model:
+  # Not gated. Native system role, which carries the username; Mistral's
+  # template handles a system message awkwardly.
+  base_model: "Qwen/Qwen2.5-7B-Instruct"
+  output_dir: "/workspace/models/litigpt_top30_qwen7b_lora"
+
+training:
+  # 2, not 3. Confirmed on the corrected run (2026-09-21, 3352 steps, 2h49m):
+  # eval_loss fell 3.0371 -> 2.8758 over six 500-step evals, the last interval
+  # buying 0.0027 - already under early_stopping_threshold. A third epoch
+  # would buy noise. See config.top30.yaml for why these numbers are higher
+  # than the first run's and not comparable with them.
+  num_epochs: 2
+  # 4 x 8 keeps the effective batch at 32 while halving peak activation memory,
+  # which matters because max_seq_length has doubled. On a 7B base this peaks
+  # at 22.9GB of 24 - no headroom. group_by_length puts the longest batch
+  # first, so an OOM shows at step 1; if it does, use 2 x 16.
+  batch_size: 4
+  gradient_accumulation_steps: 8
+  # Halved from 2e-4: detected target_modules raise trainable parameters from
+  # 17.8M to 50.3M, and holding the rate while tripling capacity is how an
+  # adapter overwrites instruction-following instead of layering a voice on it.
+  learning_rate: 1.0e-4
+  # Loss is masked to the reply, so an example whose prompt alone fills the
+  # window has nothing to learn from. At 512 that was 4.5% of the set.
+  max_seq_length: 1024
+  warmup_ratio: 0.05
+  train_ratio: 0.9
+  # Sequence lengths here are very uneven (median 164 tok, p95 502).
+  # Grouping by length cuts padding waste from ~103% to near zero.
+  group_by_length: true
+  # The val split is ~6k examples; at the default eval_steps of 50 that is
+  # ~100 evaluations and about two extra hours.
+  eval_steps: 500
+  save_steps: 500
+  logging_steps: 25
+  early_stopping_patience: 3
+  early_stopping_threshold: 0.005
+
+lora:
+  # 30 personas is a lot to separate; r=32 gives more capacity than the r=16
+  # that was tuned for a single user.
+  r: 32
+  lora_alpha: 64
+  lora_dropout: 0.05
+  # Empty = detect from the model. These were Llama names against a phi-3
+  # base, which fuses q/k/v into qkv_proj and gate/up into gate_up_proj, so
+  # five of the seven silently matched nothing. See config.top30.yaml.
+  target_modules: []
+
+inference:
+  max_new_tokens: 256
+  temperature: 0.8
+  top_p: 0.9
+  top_k: 50
+  repetition_penalty: 1.1
+
+user_classification:
+  strategy: "random"   # "random" or "keyword"
+  user_keywords: {}
+
+bot:
+  subreddit: "test"
+  # Required to deploy: the bot posts only as users named here, never as an
+  # anonymous fallback. Every name must be in the adapter's manifest
+  # (litigpt_manifest.json). Each reply picks one at random unless the
+  # keyword strategy prefers one.
+  available_users: []
+  trigger_keywords: []
+  reply_probability: 0.2
+  min_score_threshold: 1
+  cooldown_seconds: 120
+  max_context_depth: 3
+  bot_username: "litiGPT"
