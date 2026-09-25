@@ -1,0 +1,51 @@
+# Exploratory analysis of r/litigi with subreddit-lens: activity over time,
+# word frequencies, sentiment, posting habits, reply networks, user clusters.
+#
+# A uv project of its own rather than part of the litigpt package, for two
+# reasons. subreddit-lens needs Python 3.13, while litigpt supports 3.11 for
+# the training images. And none of these libraries should be able to move
+# the pinned training stack (torch, transformers, trl, peft) by sharing a
+# lock file with it.
+#
+#   cd analytics
+#   uv sync
+#   uv run jupyter lab
+[project]
+name = "litigi-analytics"
+version = "0.1.0"
+description = "Exploratory analysis of r/litigi with subreddit-lens"
+requires-python = ">=3.13"
+# pandas, numpy, scipy, networkx and plotly come with subreddit-lens.
+dependencies = [
+    "subreddit-lens>=0.1.0",
+    "jupyterlab>=4.4",
+    # 03 word frequency, 07 clustering
+    "nltk>=3.9",
+    "scikit-learn>=1.7",
+    "stop-words>=2018.7.23",
+    # 04 sentiment
+    "torch>=2.8",
+    "transformers>=4.55",
+    "tqdm>=4.67",
+    # static plots (03, 05, 07) and the HTML network view (06)
+    "matplotlib>=3.10.5",
+    "seaborn>=0.13.2",
+    "pyvis>=0.3.2",
+    # 07 self-organising map
+    "minisom>=2.3.5",
+]
+
+[dependency-groups]
+dev = [
+    # Strip outputs before committing: uv run nbstripout *.ipynb
+    "nbstripout>=0.9.1",
+]
+
+[tool.uv]
+# Notebooks only, nothing to build or install.
+package = false
+
+[tool.ruff.lint]
+# Exploratory notebooks: pyflakes only (undefined and unused names). Without
+# this section ruff would apply the litigpt rule set from ../pyproject.toml.
+select = ["F"]

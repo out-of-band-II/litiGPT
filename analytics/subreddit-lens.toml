@@ -1,0 +1,14 @@
+# subreddit-lens settings for r/litigi. Paths are relative to this file.
+subreddit = "litigi"
+timezone = "Europe/Rome"
+language = "it"
+# The archives the training pipeline uses too; they are only read.
+archive_dir = "../data/raw"
+# Parquet files in the subreddit-lens schema. They cannot go in data/raw: the
+# training pipeline keeps its own litigi_*.parquet there, with another schema.
+data_dir = "../data/analytics"
+output_dir = "output"
+# Optional date range (inclusive, UTC days):
+# start = 2020-01-01
+# end = 2024-12-31
+exclude_authors = ["[deleted]", "AutoModerator"]
