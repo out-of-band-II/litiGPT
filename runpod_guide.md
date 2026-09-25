@@ -681,7 +681,7 @@ have been stable, treat the warning as real.
 ## Where everything lives
 
 All of it is in `~/.ssh/`, which on your Windows box is
-`C:\Users\rubio\.ssh\`:
+`C:\Users\<you>\.ssh\`:
 
 | File | What it is |
 |---|---|
@@ -964,7 +964,7 @@ directions, with no scp syntax to remember.
 | Remote host | the pod IP, e.g. `213.173.107.97` |
 | Specify username | `root` |
 | Port | the pod's mapped SSH port, e.g. `11216` |
-| Advanced SSH settings -> Use private key | `C:\Users\rubio\.ssh\id_litigpt` |
+| Advanced SSH settings -> Use private key | `C:\Users\<you>\.ssh\id_litigpt` |
 
 MobaXterm reads OpenSSH keys directly; there is no need to convert anything to
 PuTTY's `.ppk` format, and no need to run its key generator.

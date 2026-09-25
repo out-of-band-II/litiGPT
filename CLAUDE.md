@@ -36,6 +36,16 @@ contracts are in [architecture_diagram.md](architecture_diagram.md).
 - **`config.py`** — Pydantic schema
 - **`pipeline.py`** — orchestration and every CLI entry point
 
+`analytics/` is not part of the package: exploratory notebooks on the
+subreddit, built on the `subreddit-lens` library from PyPI, in a uv project of
+their own (Python 3.13, own lock file) so they cannot move the pinned training
+stack. Nothing in `litigpt/` imports them or reads their output. They ingest
+`data/raw/*.zst` into `data/analytics/` with subreddit-lens's schema; never
+point them at `data/raw/litigi_*.parquet`, which the extraction step reads
+with its own. They are the only tracked notebooks (`!analytics/*.ipynb` in
+`.gitignore`) and must be committed without outputs, which hold real usernames
+and comments; `tests/test_analytics_notebooks.py` enforces it.
+
 ## Things that have bitten before
 
 These are not hypothetical. Each one shipped, trained or served without error,
@@ -202,6 +212,7 @@ stopping.
 - [cloud_training_guide.md](cloud_training_guide.md) — RunPod training paths
 - [runpod_guide.md](runpod_guide.md) — operating and debugging pods
 - [blind_eval_guide.md](blind_eval_guide.md) — evaluation protocol
+- [analytics/README.md](analytics/README.md) — the analytics notebooks
 - `CLAUDE.md` — this file
 
 ## Environment

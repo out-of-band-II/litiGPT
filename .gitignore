@@ -493,3 +493,11 @@ models/smoke_lora/
 # real, named users. Kept out of git like every other data/ artefact — back
 # these up yourself, they are the output of the evaluation.
 data/eval/
+
+# Analytics (analytics/, a separate uv project on subreddit-lens).
+# Its notebooks are tracked, without outputs (tests/test_analytics_notebooks.py);
+# the Parquet files it ingests and everything it writes hold usernames and
+# comment text.
+!analytics/*.ipynb
+data/analytics/
+analytics/output/

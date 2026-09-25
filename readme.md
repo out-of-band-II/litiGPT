@@ -26,6 +26,7 @@ rather than a model swap.
 - [Configuration](#configuration)
 - [Training on a rented GPU](#training-on-a-rented-gpu)
 - [Deploying to Reddit](#deploying-to-reddit)
+- [Analytics](#analytics)
 - [Tests](#tests)
 - [Troubleshooting](#troubleshooting)
 - [Ethics](#ethics)
@@ -246,6 +247,25 @@ There is deliberately no model-based persona router.
 
 Run it where a GPU is: the adapter loads in 4-bit, and CPU inference is slow
 enough to be impractical for a live bot.
+
+---
+
+## Analytics
+
+`analytics/` holds exploratory notebooks on the subreddit itself: activity over
+time, word frequencies, sentiment, posting habits, the reply network and user
+clusters. They are built on [subreddit-lens](https://pypi.org/project/subreddit-lens/)
+and live in a separate uv project, so their dependencies never touch the
+training stack:
+
+```bash
+cd analytics
+uv sync
+uv run jupyter lab
+```
+
+They read the same archives in `data/raw/` and write their own Parquet files to
+`data/analytics/`. See [analytics/README.md](analytics/README.md).
 
 ---
 
