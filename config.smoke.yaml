@@ -17,9 +17,10 @@ data:
   exclude_authors: ["[deleted]", "[removed]", "AutoModerator"]
   strip_quoted_text: true
 
-  min_comment_length: 10
-  max_comment_length: 512
-  min_score: 1
+  min_comment_words: 5
+  max_comment_length: 2000
+  min_score: null
+  exclude_moderator_comments: true
 
 model:
   # 135M params with a real chat template: small enough to download and train
@@ -49,6 +50,8 @@ inference:
   top_p: 0.9
   top_k: 50
   repetition_penalty: 1.1
+  min_reply_words: 5
+  reply_candidates: 3
 
 user_classification:
   strategy: "random"

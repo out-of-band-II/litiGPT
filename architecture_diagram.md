@@ -15,17 +15,20 @@ data/raw/*.parquet
 │ litigpt/data/extraction.py                                │
 │                                                           │
 │  pick the cohort      target_usernames, or top_n_users    │
-│  index threads        comments_by_id, posts_by_id         │
+│  index threads        comments + posts, from both files   │
 │  walk parents         get_context_for_comment(max=3..5)   │
 └───────────────────────────┬───────────────────────────────┘
-                            │  context items: dicts with
-                            │  author + body/selftext
+                            │  context items: comments (author
+                            │  + body), posts (author + title
+                            │  + selftext, type='post')
                             ▼
 ┌───────────────────────────────────────────────────────────┐
 │ litigpt/data/preprocessing.py                             │
 │                                                           │
 │  clean_text           unescape, strip markup, drop quotes │
+│  filter_quality       >=5 words, <=2000 chars, no mod     │
 │  _format_context  ──▶ render_thread()   ◀── the contract  │
+│                       render_post() for a post            │
 │  cap per user         max_pairs_per_user                  │
 │  split                prompt / completion, train / val    │
 └───────────────────────────┬───────────────────────────────┘
@@ -53,16 +56,23 @@ data/raw/*.parquet
 written into `model.output_dir` before the model loads. The trainer copies it
 into every checkpoint, and it is completed after the final save. It records:
 
+- a `version`, `YYYYMMDD-HHMM-<base>` from when training started, and the
+  config's `notes` on why the run exists
 - the cohort, read from `train.jsonl`, with examples per user
 - sha256 hashes of `train.jsonl` and `val.jsonl`
 - the resolved config
 - the git commit, or null on a pod with no `.git`
 - library versions
 - the modules the safetensors actually contain
+- training `metrics`: the eval_loss curve, best and final loss, steps
 
 It exists because the adapter used to carry no record of who it impersonates.
 Because it sits inside the adapter directory, the RunPod archive picks it up
-with no extra step.
+with no extra step. The watchdog names that archive `litigpt_<version>.tar.gz`
+and adds `run_artifacts/` (mlflow.db, train.log);
+[litigpt/registry.py](litigpt/registry.py) imports it as `models/<version>/`
+and lists every version with its loss and blind-eval score. Training refuses
+an `output_dir` that already holds a completed adapter.
 
 For an adapter trained before the manifest existed, backfill it. The backfill
 refuses if the local data disagrees with the run's MLflow record:
@@ -88,9 +98,16 @@ build_system_prompt(username)
 render_thread([(speaker, text), ...])
     "\n".join(f"{speaker}: {text}")
 
-    Speakers are real Reddit usernames. A post is rendered exactly like
-    a comment -- its author and selftext, no title, no "Post:" label.
-    English role labels appear nowhere in the training data.
+    Speakers are real Reddit usernames. English role labels appear
+    nowhere in the training data.
+
+render_post(title, selftext)
+    "{title}\n\n{selftext[:500]}", or the title alone
+
+    A post's turn text, paired with its author like any comment. No
+    "Post:" or "Titolo:" label. Training and the Reddit bot both call it;
+    until 2026-11 training indexed no posts at all, while the bot opened
+    every thread with one.
 ```
 
 `tests/test_prompts.py::TestNoSecondImplementation` reads the source of every

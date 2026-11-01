@@ -43,6 +43,7 @@ COMMENT_COLS = _COMMON_COLS | {
     'parent_id',    # thread building (t1_<id> format)
     'link_id',      # maps comment to its submission (t3_<id> format)
     'body',         # comment text
+    'distinguished',  # "moderator" on mod-voice comments, which preprocessing drops
 }
 
 SUBMISSION_COLS = _COMMON_COLS | {

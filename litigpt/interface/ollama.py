@@ -5,13 +5,13 @@ Modern, terminal-inspired chat interface for Reddit bot
 
 import json
 import logging
-import threading
 from datetime import datetime
 from pathlib import Path
 
 from flask import Flask, Response, jsonify, render_template, request
 
 from litigpt.config import Config
+from litigpt.inference.generator import generate_reply
 from litigpt.model_utils import (
     DEFAULT_BASE_MODEL,
     DEFAULT_USERNAME,
@@ -55,7 +55,7 @@ class OllamaChatInterface:
                                 username: str | None = None,
                                 temperature: float = 0.8,
                                 max_tokens: int = 256):
-        """Generate response with streaming"""
+        """Generate a reply, yielded over the event stream as one chunk"""
 
         # Get conversation history
         if session_id not in self.conversations:
@@ -89,45 +89,22 @@ class OllamaChatInterface:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": context},
         ]
-        prompt = self.tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
+        # The reply is chosen before any of it is sent: the short-reply floor
+        # has to see a whole candidate to judge it, and text already streamed
+        # to the browser cannot be taken back. It still goes out over the same
+        # event stream, as one chunk, so the client needs no change.
+        inference = self.config.inference
+        full_response = generate_reply(
+            self.model, self.tokenizer, messages,
+            max_new_tokens=int(max_tokens),
+            temperature=float(temperature),
+            top_p=inference.top_p,
+            top_k=inference.top_k,
+            repetition_penalty=inference.repetition_penalty,
+            min_words=inference.min_reply_words,
+            candidates=inference.reply_candidates,
         )
-
-        # Tokenize
-        inputs = self.tokenizer(
-            prompt, return_tensors="pt", truncation=True, max_length=2048
-        ).to(self.model.device)
-
-        # Generate with streaming
-        from transformers import TextIteratorStreamer
-
-        streamer = TextIteratorStreamer(
-            self.tokenizer,
-            skip_special_tokens=True,
-            skip_prompt=True,
-        )
-
-        generation_kwargs = dict(
-            **inputs,
-            max_new_tokens=max_tokens,
-            temperature=temperature,
-            top_p=0.9,
-            top_k=50,
-            repetition_penalty=1.1,
-            do_sample=True,
-            pad_token_id=self.tokenizer.pad_token_id,
-            streamer=streamer,
-        )
-
-        # Start generation in thread
-        thread = threading.Thread(target=self.model.generate, kwargs=generation_kwargs)
-        thread.start()
-
-        # Stream tokens
-        full_response = ""
-        for new_text in streamer:
-            full_response += new_text
-            yield new_text
+        yield full_response
 
         # Save to history
         self.conversations[session_id].append({

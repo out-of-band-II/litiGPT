@@ -16,18 +16,27 @@ import polars as pl
 from litigpt.prompts import (
     build_alpaca_instruction,
     build_system_prompt,
+    count_words,
+    render_post,
     render_thread,
 )
 
 logger = logging.getLogger(__name__)
 
 class RedditDataPreprocessor:
-    def __init__(self, min_length: int = 10, max_length: int = 512,
-                 min_score: int = 1, strip_quoted_text: bool = True):
-        self.min_length = min_length
+    """
+    Defaults match DataConfig; see config.py for why each value is what it is.
+    """
+
+    def __init__(self, min_words: int = 5, max_length: int = 2000,
+                 min_score: int | None = None, strip_quoted_text: bool = True,
+                 exclude_moderator_comments: bool = True):
+        self.min_words = min_words
         self.max_length = max_length
         self.min_score = min_score
         self.strip_quoted_text = strip_quoted_text
+        self.exclude_moderator_comments = exclude_moderator_comments
+        self._warned_no_distinguished = False
 
     # A quoted line is Reddit's "> ..." markup. The parent comment is already
     # supplied as context, so leaving the quote in a user's own reply trains the
@@ -109,27 +118,48 @@ class RedditDataPreprocessor:
         df = df.with_columns(
             pl.col('body').map_elements(self.clean_text, return_dtype=pl.Utf8).alias('body')
         )
-
-        # Add text length column
         df = df.with_columns(
-            pl.col('body').str.len_chars().alias('text_length')
+            pl.col('body').str.len_chars().alias('text_length'),
+            pl.col('body').map_elements(count_words, return_dtype=pl.Int64).alias('word_count'),
         )
+        n_in = len(df)
 
-        # Filter by length
-        df = df.filter(
-            (pl.col('text_length') >= self.min_length) &
-            (pl.col('text_length') <= self.max_length)
-        )
+        # Deleted/removed bodies were cleaned to ''; they have 0 words, so the
+        # word floor drops them along with replies too short to say anything.
+        df = df.filter(pl.col('word_count') >= max(self.min_words, 1))
+        n_short = n_in - len(df)
 
-        # Filter deleted/removed
-        df = df.filter(pl.col('body') != '')
+        df = df.filter(pl.col('text_length') <= self.max_length)
+        n_long = n_in - n_short - len(df)
 
-        # Filter by score (optional - only keep upvoted content)
-        if 'score' in df.columns:
+        n_mod = 0
+        if self.exclude_moderator_comments:
+            if 'distinguished' in df.columns:
+                before = len(df)
+                df = df.filter(pl.col('distinguished').fill_null('') != 'moderator')
+                n_mod = before - len(df)
+            elif not self._warned_no_distinguished:
+                logger.warning(
+                    "exclude_moderator_comments is set but the data has no "
+                    "'distinguished' column, so no moderator comment was "
+                    "dropped. Re-run python -m litigpt.data.preliminary, then "
+                    "extract, to bring the column in."
+                )
+                self._warned_no_distinguished = True
+
+        n_score = 0
+        if self.min_score is not None and 'score' in df.columns:
+            before = len(df)
             df = df.with_columns(pl.col('score').cast(pl.Int64, strict=False))
             df = df.filter(pl.col('score') >= self.min_score)
+            n_score = before - len(df)
 
-        logger.info("After filtering: %s entries", len(df))
+        logger.info(
+            "Kept %d of %d (under %d words: %d, over %d chars: %d, "
+            "moderator: %d, score under %s: %d)",
+            len(df), n_in, self.min_words, n_short, self.max_length, n_long,
+            n_mod, self.min_score, n_score,
+        )
         return df
 
     def create_training_pairs(self, user_data: pl.DataFrame,
@@ -237,12 +267,20 @@ class RedditDataPreprocessor:
         than building the string here.
         """
         return render_thread(
-            (
-                item.get('author', 'unknown'),
-                self.clean_text(item.get('body') or item.get('selftext', '')),
-            )
+            (item.get('author', 'unknown'), self._turn_text(item))
             for item in context_items
         )
+
+    def _turn_text(self, item: dict) -> str:
+        """
+        Cleaned text of one context item. A post is its title and body
+        through prompts.render_post -- the Reddit bot renders the live post
+        with the same function -- and a comment is its body.
+        """
+        if item.get('type') == 'post':
+            return render_post(self.clean_text(item.get('title')),
+                               self.clean_text(item.get('selftext')))
+        return self.clean_text(item.get('body') or item.get('selftext', ''))
 
     def format_for_training(self, pairs: list[dict],
                            format_type: str = "chatml") -> list[dict]:
@@ -308,10 +346,17 @@ class RedditDataPreprocessor:
         return formatted_data
 
     def split_data(self, data: list[dict],
-                   train_ratio: float = 0.9) -> tuple[list[dict], list[dict]]:
-        """Split into train/validation sets"""
-        import random
-        random.shuffle(data)
+                   train_ratio: float = 0.9,
+                   seed: int = 0) -> tuple[list[dict], list[dict]]:
+        """
+        Split into train/validation sets.
+
+        Seeded, like the per-user sampling. The unseeded shuffle this
+        replaced drew a different validation set on every preprocess run, so
+        two runs' eval_loss were measured on different examples.
+        """
+        data = list(data)
+        random.Random(seed).shuffle(data)
 
         split_idx = int(len(data) * train_ratio)
         train_data = data[:split_idx]
@@ -344,6 +389,8 @@ def preprocessing_parser():
     parser.add_argument("--dir", "-d", required=False, default="data/raw", help="Data directory")
     parser.add_argument("--comments", "-c", required=False, default="comments.parquet",
                        help="Comment data")
+    parser.add_argument("--submissions", "-s", required=False, default="submissions.parquet",
+                       help="Submission data, so replies to a post get the post as context")
     parser.add_argument("--user", "-u", required=True)
 
     return parser
@@ -367,7 +414,8 @@ if __name__ == "__main__":
     from litigpt.data.extraction import RedditDataExtractor
     extractor = RedditDataExtractor(raw_data_dir)
     all_comments = extractor.load_data(comments_data_file)
-    thread_data = extractor.build_conversation_threads(all_comments)
+    all_posts = extractor.load_data(args.submissions)
+    thread_data = extractor.build_conversation_threads(all_comments, all_posts)
 
     # Filter quality
     user_data = preprocessor.filter_quality(user_data)

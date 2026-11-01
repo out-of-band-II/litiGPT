@@ -567,12 +567,19 @@ ssh litigpt-pod "tail -f /workspace/serve/app.log"
 # after a serving session, the artefact is the blind-eval log, not the adapter
 scp litigpt-pod:/workspace/litiGPT/data/eval/blind_eval.jsonl ./data/eval/blind_eval.pod.jsonl
 
-# after a training run, the adapter and the metrics DB
-mkdir -p ./models/litigpt_top30_lora
-tar czf - -C /workspace/litiGPT/models/litigpt_top30_lora . \
-  | tar xzf - --no-same-owner -C ./models/litigpt_top30_lora
-scp litigpt-pod:/workspace/mlflow.db ./models/litigpt_top30_lora/run_artifacts/
+# after a training run: the watchdog's archive is named by the run's version
+# and carries the adapter, its manifest, mlflow.db and train.log
+ssh litigpt-pod "ls -la /workspace/litigpt_*.tar.gz"
+scp litigpt-pod:/workspace/litigpt_<version>.tar.gz ./
+python -m litigpt.registry import litigpt_<version>.tar.gz   # -> models/<version>/
+python -m litigpt.registry list                               # every version, its loss and blind-eval score
 ```
+
+Pull the archive with one `scp` and check it with `tar tzf` before stopping the
+pod. A single tar piped over ssh has been connection-reset once on an MFS
+volume; a file copy can be retried and checksummed. `registry import` refuses
+to overwrite a version that is already there, so a second run of the same
+config can never replace the first.
 
 ---
 

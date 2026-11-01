@@ -31,9 +31,29 @@ class DataConfig(BaseModel):
     # Drop the quoted parent text ("> ...") from a user's own reply. The parent
     # is already supplied as context, so keeping it teaches the model to copy.
     strip_quoted_text: bool = True
-    min_comment_length: int = 10
-    max_comment_length: int = 512
-    min_score: int = 1
+    # Replies under this many words (prompts.count_words, after cleaning) are
+    # not trained on. Replaces a 10-character floor that kept "esattamente"
+    # and dropped "esatto". The aim is a chatbot with something to say: 15% of
+    # the top-30 replies were under 5 words, and the model learned to answer
+    # that way. The 2000-per-user cap still binds for 28 of 30 users after it.
+    min_comment_words: int = 5
+    # Longer comments are dropped, not truncated. Counted in characters, of
+    # the cleaned text. At 512 this removed around half of the written text
+    # of four personas (RedAliena, lockdownit, Brainprouser, innocent_butungu)
+    # -- the long-form writing that tells them apart. 2000 adds 5.9k comments
+    # for 4% more tokens per example, and the share overflowing 1024 tokens
+    # stays at 0.45%: overflow comes from long contexts, not long replies.
+    max_comment_length: int = 2000
+    # None trains on every comment whatever its score. A floor of 1 removed
+    # 2.7k comments, 76% of them sitting at exactly 0 -- in an argument
+    # subreddit, the unpopular ones are part of how a person writes.
+    min_score: int | None = None
+    # Drop comments a moderator posted as a moderator (distinguished in the
+    # dump). Removal notices and rule reminders are a template, not a voice:
+    # 66 of panicClark's comments were. Needs a parquet converted with the
+    # 'distinguished' column; without it nothing is dropped, and preprocess
+    # says so.
+    exclude_moderator_comments: bool = True
 
 
 class ModelConfig(BaseModel):
@@ -44,6 +64,10 @@ class ModelConfig(BaseModel):
     # project trains against.
     base_model: str = "microsoft/phi-3-mini-4k-instruct"
     output_dir: str = "models/reddit_bot_lora"
+    # Why this run exists, in a sentence: what changed against the last one.
+    # Copied into the adapter's manifest and shown by
+    # `python -m litigpt.registry list`, which is where it gets read.
+    notes: str = ""
 
 
 class TrainingConfig(BaseModel):
@@ -97,6 +121,18 @@ class InferenceConfig(BaseModel):
     top_p: float = 0.9
     top_k: int = 50
     repetition_penalty: float = 1.1
+    # Replies shorter than this many words are resampled. 15% of the replies
+    # the top-30 adapters trained on are under 5 words (28% for the tersest
+    # persona), and a short chat message draws them most: 21% after a 1-4
+    # word parent against 10% after 40+. In chat they read as the model
+    # having nothing to say. 0 turns it off.
+    min_reply_words: int = 5
+    # Candidates sampled together in one batch. The first that clears
+    # min_reply_words is the reply, so a long one is not favoured over a
+    # merely adequate one; the longest is the fallback when none clears it.
+    # Batched decoding costs little extra latency on a GPU. On CPU it
+    # multiplies the work, so set 1 there.
+    reply_candidates: int = 3
 
 
 class BotConfig(BaseModel):

@@ -23,9 +23,26 @@ data:
   exclude_authors: ["[deleted]", "[removed]", "AutoModerator"]
   strip_quoted_text: true
 
-  min_comment_length: 10
-  max_comment_length: 512
-  min_score: 1
+  # Adapters trained before November 2026 used a 10-character floor, a
+  # 512-character cap and score >= 1; their manifests record it. Measured on
+  # this cohort (2026-11-01) and changed:
+  #
+  # 15.2% of trained replies were under 5 words (27.7% for DanziRevenge), and
+  # chat showed it as one-liners. A 5-word floor costs nothing in volume: the
+  # 2000-per-user cap still binds for 28 of 30, and the other two were already
+  # under it.
+  min_comment_words: 5
+  # 512 characters dropped ~13% of the comments of RedAliena, lockdownit,
+  # Brainprouser and innocent_butungu, and with them about half their text.
+  # 2000 adds 5.9k comments for 4% more tokens per example; the share of
+  # examples overflowing 1024 tokens stays at 0.45%.
+  max_comment_length: 2000
+  # A floor of 1 removed 2,684 comments, 2,048 of them at exactly 0.
+  min_score: null
+  # 135 cohort comments are moderator-voice, across 7 users: panicClark 66,
+  # dniepr 29 (his repeated "non è permesso scrivere commenti volti a far
+  # litigare..." is one), GagujaSvalbardMan 13, martifero 10, and fewer.
+  exclude_moderator_comments: true
 
 model:
   base_model: "microsoft/phi-3-mini-4k-instruct"
@@ -94,6 +111,10 @@ inference:
   top_p: 0.9
   top_k: 50
   repetition_penalty: 1.1
+  # A one-line message drew a reply under 5 words 21% of the time in the
+  # training data, against 10% after a 40+ word one. Resample those.
+  min_reply_words: 5
+  reply_candidates: 3
 
 user_classification:
   strategy: "random"

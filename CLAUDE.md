@@ -30,8 +30,12 @@ contracts are in [architecture_diagram.md](architecture_diagram.md).
 - **`interface/`** — `gradio_app.py`, `ollama.py`, `blind_eval.py`
 - **`eval/`** — `attribution.py` (TF-IDF + logistic regression authorship)
 - **`deployment/`** — `reddit_bot.py`
-- **`prompts.py`** — the one definition of prompts and thread format
-- **`manifest.py`** — what an adapter was trained on, stored inside it
+- **`prompts.py`** — the one definition of prompts, thread and post format,
+  and word count
+- **`manifest.py`** — what an adapter was trained on, stored inside it:
+  version, data, config, code, metrics
+- **`registry.py`** — every adapter by version; imports pod archives into
+  `models/<version>/`
 - **`model_utils.py`** — loading, quantization, dtype detection, persona list
 - **`config.py`** — Pydantic schema
 - **`pipeline.py`** — orchestration and every CLI entry point
@@ -94,6 +98,32 @@ users from it through `model_utils.resolve_available_users`.
 `tests/test_manifest.py` guards against an interface reading the extraction
 list directly.
 
+**Replies to posts were never trained on.** `build_conversation_threads` was
+given the comments file alone and filed every row with a `parent_id` key as a
+comment, so the post index was always empty. Every reply to a post (10% of
+eligible comments) was dropped for having no context, and no training thread
+opened with its post — while the Reddit bot opened every thread with one, its
+docstring claiming training did the same. Found by counting what trained
+replies answered: 0 of 59,872 answered a post. Posts are now indexed from the
+submissions file and rendered once, by `prompts.render_post` (title, then
+body), for both training and the bot. `tests/test_data_filters.py` pins it.
+
+**Short replies came from the data.** 15% of trained replies were under five
+words, and in chat they read as the model having nothing to say. Training now
+drops replies under `data.min_comment_words`, and every interface samples
+through `inference.generator.generate_reply`, which resamples replies under
+`inference.min_reply_words`. `tests/test_generation.py` guards against an
+interface calling `model.generate` itself and escaping the floor.
+
+**An adapter directory is not a version.** `model.output_dir` was named by
+hand and reused by every run of a config, so pulling a second run home
+replaced the first. The manifest now carries a `version`
+(`YYYYMMDD-HHMM-<base>`, assigned at training start), the config's `notes`,
+and the training `metrics`; training refuses an `output_dir` holding a
+completed adapter; the watchdog names its archive by version; and
+`python -m litigpt.registry import` unpacks it into `models/<version>/`,
+refusing to overwrite. Blind-eval rounds record the version they judged.
+
 ## Persona selection is deliberately not learned
 
 `inference/classifier.py` has a `UserSelector` protocol, `RandomUserSelector`,
@@ -131,6 +161,8 @@ Pydantic models in `config.py`. Load with `Config.from_yaml(path)`.
 
 **Keys absent from `config.py` are ignored silently.** A typo in YAML is
 invisible. When adding a config value, add it to the Pydantic model first.
+`tests/test_config.py` fails on any key in a tracked `config.*.yaml` that the
+schema does not declare, so a renamed setting cannot linger in a file.
 
 ## Common tasks
 
@@ -146,7 +178,23 @@ when redirected, so loss lines do not reach the file live.
 auth failure for anyone who launched an interface without `--base-model`.
 
 **Adding an interface:** import from `prompts.py`. Do not rebuild the prompt
-or thread format. Add the module to the test guard.
+or thread format, and generate through `generate_reply`, not
+`model.generate`. Add the module to both test guards.
+
+**Bringing an adapter home:** `scp` the watchdog's
+`/workspace/litigpt_<version>.tar.gz`, then
+`python -m litigpt.registry import <archive>`; it lands in
+`models/<version>/`. Set `model.notes` before each run to say what changed —
+`registry list` is where versions get compared, and a version without notes
+says only its date. The two adapters trained before versioning keep their
+directory names (`litigpt_top30_lora` = 20260921-1842 phi-3 v2,
+`litigpt_top30_qwen7b_lora` = 20260924-2151 Qwen); `litigpt_top30_lora_v1_defective`
+has no manifest.
+
+**Changing a data filter:** re-run preprocess into a scratch `training_dir`
+and compare the result with the current set before paying for a run. The
+2026-11 filter change raised tokens per example by 23%, which a per-filter
+estimate (4%) missed: post context, not reply length, was most of it.
 
 ## Style
 
@@ -231,7 +279,11 @@ HF_TOKEN=                    # only for gated bases
 
 ```bash
 python -m litigpt.pipeline --step {extract|preprocess|train|eval|deploy|all} --config config.top30.yaml
-python -m litigpt.data.preliminary
+python -m litigpt.data.preliminary      # re-run if the posts parquet lacks 'title'
+
+python -m litigpt.registry list          # every adapter version, loss, blind-eval score
+python -m litigpt.registry import litigpt_<version>.tar.gz
+python -m litigpt.registry stamp <adapter_dir> --notes "..."   # version an older adapter
 python scripts/validate_dataset.py --config config.top30.yaml
 bash scripts/wsl_smoke_test.sh
 

@@ -13,11 +13,13 @@ import praw
 from dotenv import load_dotenv
 from praw.models import Comment
 
+from litigpt.config import InferenceConfig
+from litigpt.data.preprocessing import RedditDataPreprocessor
 from litigpt.inference.classifier import RandomUserSelector, UserSelector
 
 # Import inference module
 from litigpt.inference.generator import RedditBotInference
-from litigpt.prompts import render_thread
+from litigpt.prompts import render_post, render_thread
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +38,8 @@ class RedditBot:
                  max_depth: int = 3,
                  inference_config: dict | None = None,
                  mention_poll_seconds: int = 300,
-                 idle_sleep_seconds: int = 5):
+                 idle_sleep_seconds: int = 5,
+                 strip_quoted_text: bool = True):
         """
         Initialize Reddit bot.
 
@@ -57,6 +60,10 @@ class RedditBot:
             available_users: Users the bot may post as; required
             user_selector: Strategy for selecting which user to respond as
             max_depth: Max parent comments for context
+            inference_config: InferenceConfig fields as a dict; sampling and
+                the short-reply floor
+            strip_quoted_text: data.strip_quoted_text from the training
+                config, so thread text is cleaned the way training cleaned it
         """
 
         # Checked before logging in or loading a model, so a missing list
@@ -79,14 +86,17 @@ class RedditBot:
             base_model=base_model,
             use_lora=True,
             load_in_4bit=True,
+            inference=InferenceConfig(**(inference_config or {})),
         )
 
         # User selection
         self.available_users = list(available_users)
         self.user_selector = user_selector or RandomUserSelector()
 
-        # Inference settings
-        self.inference_config = inference_config or {}
+        # Training contexts were cleaned -- entities decoded, links reduced to
+        # their text, quoted lines dropped -- and live Reddit text is not. The
+        # same cleaner runs here so the model sees the text shape it learned.
+        self._cleaner = RedditDataPreprocessor(strip_quoted_text=strip_quoted_text)
 
         # Bot settings
         self.trigger_keywords = trigger_keywords or []
@@ -185,18 +195,25 @@ class RedditBot:
         """Author name of a comment or submission, as training spells it."""
         return thing.author.name if thing.author else "[deleted]"
 
+    def _comment_turn(self, comment) -> tuple[str, str]:
+        return (self._speaker(comment), self._cleaner.clean_text(comment.body))
+
     def _submission_turn(self, submission) -> tuple[str, str]:
         """
-        Render a submission as one thread turn.
+        Render a submission as one thread turn, through prompts.render_post.
 
-        Deliberately the post's author and selftext only. Training builds
-        context items from the raw dump and renders a post exactly like a
-        comment -- see RedditDataPreprocessor._format_context, which reads
-        'author' and falls back from 'body' to 'selftext'. The title is not
-        part of that, and neither is a "Post:" label. Adding either here
-        would feed the model a shape it never saw in training.
+        This used to render the post's body alone, on the belief that
+        training did the same. Training indexed no posts at all: a top-level
+        reply had no context and was dropped, and no thread ever opened with
+        its post. Training now renders posts with render_post as well -- title
+        and body, cleaned the same way -- so this turn is one the model has
+        seen.
         """
-        return (self._speaker(submission), submission.selftext[:500])
+        return (
+            self._speaker(submission),
+            render_post(self._cleaner.clean_text(submission.title),
+                        self._cleaner.clean_text(submission.selftext)),
+        )
 
     def get_comment_context(self, comment) -> str:
         """
@@ -220,7 +237,7 @@ class RedditBot:
             try:
                 parent = current.parent()
                 if isinstance(parent, Comment):
-                    turns.insert(0, (self._speaker(parent), parent.body))
+                    turns.insert(0, self._comment_turn(parent))
                     current = parent
                 else:
                     # Parent is the submission.
@@ -231,7 +248,7 @@ class RedditBot:
                 break
 
         # The comment being replied to closes the thread.
-        turns.append((self._speaker(comment), comment.body))
+        turns.append(self._comment_turn(comment))
 
         return render_thread(turns)
 
@@ -264,14 +281,9 @@ class RedditBot:
             username = self.select_user_for_context(context)
             logger.info("Responding as: %s", username)
 
-            # Generate response
-            response = self.bot_inference.generate_response(
-                context,
-                username=username,
-                max_new_tokens=self.inference_config.get("max_new_tokens", 256),
-                temperature=self.inference_config.get("temperature", 0.8),
-                top_p=self.inference_config.get("top_p", 0.9),
-            )
+            # Generate response; sampling settings come from the bot's
+            # InferenceConfig, short-reply floor included.
+            response = self.bot_inference.generate_response(context, username=username)
 
             logger.info("Generated response: %s", response)
 

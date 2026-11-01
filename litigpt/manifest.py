@@ -18,6 +18,13 @@ The cohort is read from train.jsonl rather than from config or extraction
 metadata. With top_n selection data.target_usernames is empty, and the
 extraction metadata describes what was extracted, not what was trained on.
 The training file is what the adapter actually saw.
+
+Schema 2 adds what tells one adapter from the next: a version id assigned
+when training starts, the config's notes on why the run exists, and the
+training metrics once it ends. Adapter directories used to be named by hand
+in model.output_dir, and a second run of the same config wrote to the same
+path -- pulling it home would have replaced the first. litigpt.registry lists
+adapters by version and imports archives into models/<version>/.
 """
 
 import argparse
@@ -34,7 +41,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 MANIFEST_FILENAME = "litigpt_manifest.json"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _TRACKED_LIBRARIES = (
     "torch", "transformers", "trl", "peft", "datasets",
@@ -44,6 +51,73 @@ _TRACKED_LIBRARIES = (
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def make_version(base_model: str, started: datetime) -> str:
+    """
+    The id of one training run: when it started (UTC) and on what base.
+
+    Sorts chronologically, needs no counter shared between machines -- a pod
+    cannot see which versions exist locally -- and says what it is at a
+    glance: 20261102-1430-qwen2.5-7b-instruct.
+    """
+    return f"{started:%Y%m%d-%H%M}-{base_model.rsplit('/', maxsplit=1)[-1].lower()}"
+
+
+def training_metrics(log_history: list[dict]) -> dict | None:
+    """How training went, from a Trainer's log_history (or a trainer_state.json)."""
+    evals = [(int(e["step"]), float(e["eval_loss"])) for e in log_history if "eval_loss" in e]
+    losses = [float(e["loss"]) for e in log_history if "loss" in e]
+    if not evals and not losses:
+        return None
+    summary = next((e for e in reversed(log_history) if "train_runtime" in e), {})
+    return {
+        "eval_loss": [[step, round(loss, 4)] for step, loss in evals],
+        "best_eval_loss": round(min(loss for _, loss in evals), 4) if evals else None,
+        "final_eval_loss": round(evals[-1][1], 4) if evals else None,
+        "final_train_loss": round(losses[-1], 4) if losses else None,
+        "global_step": max(int(e.get("step", 0)) for e in log_history),
+        "epoch": round(max(float(e.get("epoch", 0)) for e in log_history), 3),
+        "train_runtime_s": summary.get("train_runtime"),
+    }
+
+
+def metrics_from_checkpoints(adapter_dir: str | Path) -> dict | None:
+    """Training metrics from the latest checkpoint's trainer_state.json."""
+    states = sorted(
+        Path(adapter_dir).glob("checkpoint-*/trainer_state.json"),
+        key=lambda p: int(p.parent.name.split("-")[-1]),
+    )
+    if not states:
+        return None
+    try:
+        state = json.loads(states[-1].read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Unreadable %s: %s", states[-1], exc)
+        return None
+    metrics = training_metrics(state.get("log_history", []))
+    # The last log line is not the last step: logging happens every N steps.
+    if metrics is not None:
+        metrics["global_step"] = state.get("global_step", metrics["global_step"])
+        metrics["epoch"] = round(float(state.get("epoch", metrics["epoch"])), 3)
+    return metrics
+
+
+def refuse_to_overwrite(directory: str | Path) -> None:
+    """
+    Raise if directory already holds a completed adapter.
+
+    A run that died leaves status 'started', and training over it is fine.
+    A completed one is a version someone may be using; writing a new run on
+    top of it destroys it, which is what reusing an output_dir would do.
+    """
+    existing = read_manifest(directory)
+    if existing and existing.get("status") == "completed":
+        raise FileExistsError(
+            f"{directory} already holds a completed adapter "
+            f"({existing.get('version') or 'unversioned'}); training would "
+            "overwrite it. Point model.output_dir at a new directory."
+        )
 
 
 def cohort_from_training_data(train_path: str | Path) -> dict[str, int]:
@@ -149,12 +223,16 @@ def build_manifest(config, config_path: str | None, *, provenance: str) -> dict:
     if val_path.exists():
         dataset["val"] = file_fingerprint(val_path)
 
+    started = datetime.now(UTC)
     return {
         "schema_version": SCHEMA_VERSION,
+        "version": make_version(config.model.base_model, started),
+        "notes": config.model.notes,
         "provenance": provenance,
         "status": "started",
-        "started_at": _now(),
+        "started_at": started.isoformat(timespec="seconds"),
         "finished_at": None,
+        "metrics": None,
         "base_model": config.model.base_model,
         "users": list(counts),
         "examples_per_user": counts,
@@ -189,8 +267,13 @@ def read_manifest(directory: str | Path) -> dict | None:
         return None
 
 
-def finalize_manifest(directory: str | Path) -> dict | None:
-    """Mark the run complete and record what the saved weights contain."""
+def finalize_manifest(directory: str | Path,
+                      log_history: list[dict] | None = None) -> dict | None:
+    """
+    Mark the run complete; record what the saved weights contain and how
+    training went. log_history is the Trainer's; without it the metrics come
+    from the latest checkpoint's trainer_state.json.
+    """
     manifest = read_manifest(directory)
     if manifest is None:
         logger.warning("No manifest in %s to finalize", directory)
@@ -198,7 +281,64 @@ def finalize_manifest(directory: str | Path) -> dict | None:
     manifest["status"] = "completed"
     manifest["finished_at"] = _now()
     manifest["adapted_modules"] = adapted_modules(directory)
+    manifest["metrics"] = (training_metrics(log_history) if log_history
+                           else metrics_from_checkpoints(directory))
     write_manifest(manifest, directory)
+    return manifest
+
+
+def run_started_at(adapter_dir: str | Path, manifest: dict | None = None) -> tuple[datetime, str]:
+    """
+    When the run that produced adapter_dir started, and where that came from.
+
+    The manifest's own started_at if it has one; else the training run in
+    run_artifacts/mlflow.db, the database the pod's run logged to; else the
+    weights file's modification time, which on a copied adapter is when it
+    was copied and is labelled as approximate.
+    """
+    if manifest and manifest.get("started_at"):
+        return datetime.fromisoformat(manifest["started_at"]), "manifest started_at"
+
+    db = Path(adapter_dir) / "run_artifacts" / "mlflow.db"
+    if db.exists():
+        import sqlite3
+
+        try:
+            with sqlite3.connect(str(db)) as conn:
+                row = conn.execute(
+                    "select start_time from runs where name like 'train%' "
+                    "order by start_time desc limit 1"
+                ).fetchone()
+            if row and row[0]:
+                return datetime.fromtimestamp(row[0] / 1000, UTC), "run_artifacts/mlflow.db"
+        except sqlite3.Error as exc:
+            logger.warning("Could not read %s: %s", db, exc)
+
+    weights = Path(adapter_dir) / "adapter_model.safetensors"
+    return (datetime.fromtimestamp(weights.stat().st_mtime, UTC),
+            "approximate: weights file modification time")
+
+
+def stamp_manifest(adapter_dir: str | Path, notes: str | None = None) -> dict:
+    """
+    Bring an older manifest up to schema 2: give it a version from its run's
+    start time and metrics from its checkpoints. Fields it already has are
+    kept, so stamping twice changes nothing but notes, when given.
+    """
+    manifest = read_manifest(adapter_dir)
+    if manifest is None:
+        raise FileNotFoundError(f"No {MANIFEST_FILENAME} in {adapter_dir}")
+    if not manifest.get("version"):
+        started, source = run_started_at(adapter_dir, manifest)
+        manifest["version"] = make_version(manifest["base_model"], started)
+        manifest["version_source"] = source
+    if not manifest.get("metrics"):
+        manifest["metrics"] = metrics_from_checkpoints(adapter_dir)
+    if notes is not None:
+        manifest["notes"] = notes
+    manifest.setdefault("notes", "")
+    manifest["schema_version"] = SCHEMA_VERSION
+    write_manifest(manifest, adapter_dir)
     return manifest
 
 
@@ -279,6 +419,11 @@ def backfill(adapter_dir: str, config_path: str, mlflow_db: str | None) -> dict:
     manifest["libraries"] = None
     manifest["status"] = "completed"
     manifest["adapted_modules"] = adapted_modules(adapter_dir)
+    # build_manifest dated the version now; the run happened earlier.
+    started, source = run_started_at(adapter_dir)
+    manifest["version"] = make_version(config.model.base_model, started)
+    manifest["version_source"] = source
+    manifest["metrics"] = metrics_from_checkpoints(adapter_dir)
     write_manifest(manifest, adapter_dir)
     return manifest
 

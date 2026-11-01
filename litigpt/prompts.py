@@ -32,6 +32,46 @@ def render_thread(turns: Iterable[tuple[str, str]]) -> str:
     return "\n".join(f"{speaker}: {text}" for speaker, text in turns if text)
 
 
+# A post's body is cut here before it becomes a thread turn. The bot had cut
+# at 500 characters on its own since it was written; the cut now lives where
+# training can apply it too, so a long post costs the same share of the token
+# budget in both.
+POST_BODY_MAX_CHARS = 500
+
+
+def render_post(title: str | None, selftext: str | None) -> str:
+    """
+    The text of a submission as one thread turn: its title, then its body.
+
+    Callers clean the two strings first and pair the result with the post's
+    author, so it renders as "author: title\\n\\nbody" like any other turn.
+
+    The title is the only text a link or image post has -- 42% of this
+    subreddit's posts have an empty or removed body -- so it is never dropped.
+    There is no "Titolo:" label: a fixed label is a shape that real comments
+    never have, and the blank line already separates the two.
+
+    This is the single definition, shared by preprocessing and the Reddit bot.
+    Training used to index no posts at all, while the bot rendered the post's
+    body as the opening turn of every thread -- a turn the model had never
+    seen.
+    """
+    title = (title or "").strip()
+    body = (selftext or "").strip()[:POST_BODY_MAX_CHARS].strip()
+    return "\n\n".join(part for part in (title, body) if part)
+
+
+def count_words(text: str | None) -> int:
+    """
+    Whitespace-separated words: the one measure of reply length.
+
+    Preprocessing drops training replies under data.min_comment_words, and
+    inference resamples replies under inference.min_reply_words. Both count
+    with this, so "5 words" means the same thing on either side.
+    """
+    return len((text or "").split())
+
+
 def build_system_prompt(username: str) -> str:
     """
     Build the system prompt for a given user.

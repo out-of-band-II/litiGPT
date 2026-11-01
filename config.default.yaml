@@ -33,9 +33,20 @@ data:
   # already supplied as context, so keeping it teaches the model to copy.
   strip_quoted_text: true
 
-  min_comment_length: 10
-  max_comment_length: 512
-  min_score: 1
+  # Replies under this many words are not trained on. A 10-character floor
+  # used to stand here; it kept "esattamente" and dropped "esatto", and still
+  # let 15% of training replies be under 5 words, which the model learned
+  # to reproduce as one-liners.
+  min_comment_words: 5
+  # Characters of cleaned text; longer comments are dropped, not truncated.
+  # 512 cut away the long-form writing of the personas who write long.
+  max_comment_length: 2000
+  # null trains on comments whatever their score. A floor mostly removes
+  # score-0 comments, which in an argument subreddit are part of the voice.
+  min_score: null
+  # Drop comments posted as a moderator (removal notices, rule reminders).
+  # Needs the 'distinguished' column from the current preliminary.py.
+  exclude_moderator_comments: true
 
 model:
   # phi-3-mini is the cheapest useful base and needs no gated-repo access.
@@ -45,6 +56,11 @@ model:
   # - "mistralai/Mistral-7B-Instruct-v0.3"
   # - "meta-llama/Llama-3.1-8B-Instruct"   (gated)
   output_dir: "models/reddit_bot_lora"
+  # Why this run exists, in a sentence. It goes into the adapter's manifest
+  # beside the version id assigned at training start, and shows in
+  # `python -m litigpt.registry list`. Training refuses an output_dir that
+  # already holds a completed adapter.
+  notes: ""
 
 training:
   num_epochs: 2
@@ -95,6 +111,13 @@ inference:
   top_p: 0.9
   top_k: 50
   repetition_penalty: 1.1
+  # Replies under this many words are resampled; 0 turns it off. In chat a
+  # two-word reply reads as the model having nothing to say, and a short
+  # message draws them most.
+  min_reply_words: 5
+  # Sampled together in one batch; the first to clear min_reply_words is the
+  # reply. Cheap on a GPU, multiplies the work on CPU -- use 1 there.
+  reply_candidates: 3
 
 user_classification:
   # Which persona the bot answers as. "random" picks from bot.available_users;

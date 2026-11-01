@@ -30,8 +30,10 @@ PID="${1:?usage: post_training_watchdog.sh <training-pid> [--no-stop]}"
 MODE="${2:-}"
 
 WORK=/workspace
-ARCHIVE=$WORK/litigpt_final.tar.gz
 LOG=$WORK/watchdog.log
+# The run's log, packed into the archive with mlflow.db. runpod_guide.md
+# launches training with "> /workspace/train.log"; say so if it went elsewhere.
+TRAIN_LOG="${LITIGPT_TRAIN_LOG:-$WORK/train.log}"
 # RUNPOD_POD_ID is set in the container's own environment, but an SSH session
 # gets a fresh one and does NOT inherit it - verified empty over ssh on
 # 2026-09-21. RunPod also writes it to /etc/rp_environment, which is readable
@@ -81,16 +83,34 @@ else
     log "no final adapter written; falling back to latest checkpoint: ${SRC:-none}"
 fi
 
-# ---- slim archive: adapter + tokenizer, no optimizer state ----------------
+# ---- name the archive by version ------------------------------------------
+# Every archive used to be litigpt_final.tar.gz, so a second run on the same
+# volume replaced the first. The manifest's version is unique per run, and
+# `python -m litigpt.registry import` unpacks into models/<version>/.
+VERSION=""
+if [ -n "${SRC:-}" ] && [ -f "$SRC/litigpt_manifest.json" ]; then
+    VERSION=$(python -c 'import json, sys; print(json.load(open(sys.argv[1])).get("version") or "")' \
+        "$SRC/litigpt_manifest.json" 2>>"$LOG")
+fi
+[ -n "$VERSION" ] || log "WARNING: no version in the manifest; archive named litigpt_final"
+ARCHIVE="$WORK/litigpt_${VERSION:-final}.tar.gz"
+
+# ---- slim archive: adapter + tokenizer + run record, no optimizer state ----
 # optimizer.pt is ~140MB and is only needed to resume training, not to run
-# the model, so it stays out of the archive.
+# the model, so it stays out of the archive. mlflow.db and the training log go
+# in under run_artifacts/, where they used to be copied by hand.
+EXTRA=()
+for f in "$WORK/mlflow.db" "$TRAIN_LOG"; do
+    [ -f "$f" ] && EXTRA+=(-C "$(dirname "$f")" "$(basename "$f")")
+done
 if [ -n "${SRC:-}" ] && [ -d "$SRC" ]; then
-    tar czf "$ARCHIVE" -C "$SRC" \
+    tar czf "$ARCHIVE" \
         --exclude='optimizer.pt' \
         --exclude='rng_state.pth' \
         --exclude='scheduler.pt' \
-        . 2>>"$LOG" \
-        && log "archive written: $(du -h "$ARCHIVE" 2>/dev/null | cut -f1) from $SRC" \
+        --transform='s,^\([^./][^/]*\)$,run_artifacts/\1,' \
+        -C "$SRC" . "${EXTRA[@]}" 2>>"$LOG" \
+        && log "archive written: $ARCHIVE ($(du -h "$ARCHIVE" 2>/dev/null | cut -f1)) from $SRC" \
         || log "ERROR: archive failed"
 else
     log "ERROR: no adapter directory found; nothing archived"

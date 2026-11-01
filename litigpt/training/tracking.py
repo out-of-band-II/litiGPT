@@ -13,10 +13,16 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+# Used when MLFLOW_TRACKING_URI is unset. This was "file:./mlruns", a file
+# store, which MLflow 3 refuses -- so an unconfigured run failed at the
+# tracker rather than training.
+DEFAULT_TRACKING_URI = "sqlite:///mlflow.db"
+
+
 class MLflowTracker:
     def __init__(self,
                  experiment_name: str = "reddit-chatbot",
-                 tracking_uri: str = "file:./mlruns"):
+                 tracking_uri: str = DEFAULT_TRACKING_URI):
         """
         Initialize MLflow tracking
 

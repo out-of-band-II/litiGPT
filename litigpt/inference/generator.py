@@ -1,17 +1,91 @@
 """
 Module 4: Model Inference
 Generate responses using the fine-tuned model
+
+generate_reply is the one place a reply is sampled. RedditBotInference (the
+blind evaluation, the Reddit bot, the pipeline's eval step), the Gradio app
+and the Ollama server all call it, so a sampling rule such as the short-reply
+floor applies everywhere or nowhere.
 """
 
+import logging
 
 import torch
 
+from litigpt.config import InferenceConfig
 from litigpt.model_utils import (
     DEFAULT_BASE_MODEL,
     DEFAULT_USERNAME,
     load_model_and_tokenizer,
 )
-from litigpt.prompts import build_system_prompt
+from litigpt.prompts import build_system_prompt, count_words
+
+logger = logging.getLogger(__name__)
+
+
+def pick_reply(candidates: list[str], min_words: int) -> str:
+    """
+    The first candidate with at least min_words words, else the longest.
+
+    First, not longest: candidates are independent samples, so taking the
+    first that qualifies is rejection sampling -- a reply drawn from what the
+    model would say, given that it says something. Taking the longest would
+    push every persona toward its most verbose register.
+    """
+    replies = [c.strip() for c in candidates]
+    if not replies:
+        return ""
+    for reply in replies:
+        if count_words(reply) >= min_words:
+            return reply
+    return max(replies, key=count_words)
+
+
+def generate_reply(model, tokenizer, messages: list[dict], *,
+                   max_new_tokens: int,
+                   temperature: float,
+                   top_p: float,
+                   top_k: int,
+                   repetition_penalty: float,
+                   min_words: int = 0,
+                   candidates: int = 1) -> str:
+    """
+    Sample a reply to chat messages, resampling ones under min_words words.
+
+    All candidates are decoded in one batch with num_return_sequences, so on
+    a GPU the floor costs one generation's latency, not one per retry.
+    With min_words 0 or a single candidate this is a plain sampled reply.
+    """
+    prompt = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+    inputs = tokenizer(
+        prompt, return_tensors="pt", truncation=True, max_length=2048
+    ).to(model.device)
+
+    n = max(1, candidates) if min_words > 0 else 1
+    pad_token_id = (tokenizer.pad_token_id if tokenizer.pad_token_id is not None
+                    else tokenizer.eos_token_id)
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            repetition_penalty=repetition_penalty,
+            do_sample=True,
+            num_return_sequences=n,
+            pad_token_id=pad_token_id,
+        )
+
+    start = inputs["input_ids"].shape[1]
+    texts = [tokenizer.decode(seq[start:], skip_special_tokens=True) for seq in outputs]
+    if n > 1:
+        short = sum(count_words(t.strip()) < min_words for t in texts)
+        if short:
+            logger.info("%d of %d candidates were under %d words", short, n, min_words)
+    return pick_reply(texts, min_words if n > 1 else 0)
 
 
 class RedditBotInference:
@@ -19,7 +93,8 @@ class RedditBotInference:
                  model_path: str,
                  base_model: str = DEFAULT_BASE_MODEL,
                  use_lora: bool = True,
-                 load_in_4bit: bool = True):
+                 load_in_4bit: bool = True,
+                 inference: InferenceConfig | None = None):
         """
         Initialize inference engine
 
@@ -28,9 +103,12 @@ class RedditBotInference:
             base_model: Base model name (if using LoRA)
             use_lora: Whether to load LoRA adapters
             load_in_4bit: Whether to use 4-bit quantization
+            inference: Sampling settings; any argument generate_response is
+                not given comes from here.
         """
         self.model_path = model_path
         self.base_model = base_model
+        self.inference = inference or InferenceConfig()
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
         # Load model and tokenizer
@@ -66,11 +144,11 @@ class RedditBotInference:
                          context: str,
                          system_prompt: str | None = None,
                          username: str | None = None,
-                         max_new_tokens: int = 256,
-                         temperature: float = 0.7,
-                         top_p: float = 0.9,
-                         top_k: int = 50,
-                         repetition_penalty: float = 1.1) -> str:
+                         max_new_tokens: int | None = None,
+                         temperature: float | None = None,
+                         top_p: float | None = None,
+                         top_k: int | None = None,
+                         repetition_penalty: float | None = None) -> str:
         """
         Generate a response given context
 
@@ -83,46 +161,23 @@ class RedditBotInference:
             top_p: Nucleus sampling parameter
             top_k: Top-k sampling parameter
             repetition_penalty: Penalty for repeating tokens
+
+        Unset sampling arguments come from self.inference, as do the
+        short-reply floor settings.
         """
-
-        # Format prompt
-        messages = self.format_prompt(context, system_prompt, username)
-
-        # Apply chat template
-        prompt = self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True
+        cfg = self.inference
+        return generate_reply(
+            self.model, self.tokenizer,
+            self.format_prompt(context, system_prompt, username),
+            max_new_tokens=max_new_tokens if max_new_tokens is not None else cfg.max_new_tokens,
+            temperature=temperature if temperature is not None else cfg.temperature,
+            top_p=top_p if top_p is not None else cfg.top_p,
+            top_k=top_k if top_k is not None else cfg.top_k,
+            repetition_penalty=(repetition_penalty if repetition_penalty is not None
+                                else cfg.repetition_penalty),
+            min_words=cfg.min_reply_words,
+            candidates=cfg.reply_candidates,
         )
-
-        # Tokenize
-        inputs = self.tokenizer(
-            prompt,
-            return_tensors="pt",
-            truncation=True,
-            max_length=2048
-        ).to(self.device)
-
-        # Generate
-        with torch.no_grad():
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                top_k=top_k,
-                repetition_penalty=repetition_penalty,
-                do_sample=True,
-                pad_token_id=self.tokenizer.eos_token_id,
-            )
-
-        # Decode
-        generated_text = self.tokenizer.decode(
-            outputs[0][inputs['input_ids'].shape[1]:],
-            skip_special_tokens=True
-        )
-
-        return generated_text.strip()
 
     def generate_as_user(self, context: str, username: str, **kwargs) -> str:
         """

@@ -62,10 +62,11 @@ class PipelineRunner:
 
         data = self.config.data
         preprocessor = RedditDataPreprocessor(
-            min_length=data.min_comment_length,
+            min_words=data.min_comment_words,
             max_length=data.max_comment_length,
             min_score=data.min_score,
             strip_quoted_text=data.strip_quoted_text,
+            exclude_moderator_comments=data.exclude_moderator_comments,
         )
 
         # The cohort is whatever extraction actually wrote. With top_n selection
@@ -92,10 +93,18 @@ class PipelineRunner:
         if missing:
             logger.warning("No parquet files found for: %s", sorted(missing))
 
-        # Load all comments and build conversation threads for context
+        # Index every comment and post, so each reply can be given the thread
+        # above it -- up to and including the post it was written under.
         extractor = RedditDataExtractor(data.raw_dir)
         all_comments = extractor.load_data(data.comments_filename)
-        thread_data = extractor.build_conversation_threads(all_comments)
+        all_posts = extractor.load_data(data.submission_filename)
+        if "title" not in all_posts.columns:
+            raise ValueError(
+                f"{data.submission_filename} has no 'title' column, and for 42% "
+                "of posts the title is the only text. It predates the current "
+                "preliminary.py; re-run: python -m litigpt.data.preliminary"
+            )
+        thread_data = extractor.build_conversation_threads(all_comments, all_posts)
 
         # Filter quality per user
         users_data = {u: preprocessor.filter_quality(d) for u, d in users_data.items()}
@@ -131,17 +140,26 @@ class PipelineRunner:
         import mlflow
         import torch
 
-        from litigpt.training.tracking import MLflowTracker
+        from litigpt.training.tracking import DEFAULT_TRACKING_URI, MLflowTracker
         from litigpt.training.trainer import RedditModelTrainer
 
         logger.info("[3/5] TRAINING MODEL")
         logger.info("-" * 60)
 
-        from litigpt.manifest import build_manifest, finalize_manifest, write_manifest
+        from litigpt.manifest import (
+            build_manifest,
+            finalize_manifest,
+            refuse_to_overwrite,
+            write_manifest,
+        )
 
         model_cfg = self.config.model
         training_cfg = self.config.training
         data_cfg = self.config.data
+
+        # A completed adapter in output_dir is an earlier version; a new run
+        # there would replace it.
+        refuse_to_overwrite(model_cfg.output_dir)
 
         # Record who this adapter will impersonate, and from what, before any
         # GPU time is spent. It goes inside output_dir so it travels with the
@@ -151,10 +169,11 @@ class PipelineRunner:
         )
         manifest_path = write_manifest(manifest, model_cfg.output_dir)
         cohort = manifest["users"]
-        logger.info("Cohort: %d users, recorded in %s", len(cohort), manifest_path)
+        logger.info("Version %s: %d users, recorded in %s",
+                    manifest["version"], len(cohort), manifest_path)
 
         # Initialize MLflow
-        tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "file:./mlruns")
+        tracking_uri = os.getenv("MLFLOW_TRACKING_URI", DEFAULT_TRACKING_URI)
         tracker = MLflowTracker(
             experiment_name="reddit-chatbot-training",
             tracking_uri=tracking_uri,
@@ -168,6 +187,7 @@ class PipelineRunner:
         tracker.start_run(
             run_name=f"train_{cohort_label}_{model_short}",
             tags={
+                "version": manifest["version"],
                 "model": model_cfg.base_model,
                 "users": ",".join(cohort),
                 "train_sha256": manifest["dataset"]["train"]["sha256"],
@@ -239,7 +259,7 @@ class PipelineRunner:
                 output_dir=model_cfg.output_dir,
             )
 
-            trainer.train(
+            hf_trainer = trainer.train(
                 data_dir=data_cfg.training_dir,
                 num_epochs=training_cfg.num_epochs,
                 batch_size=training_cfg.batch_size,
@@ -266,8 +286,13 @@ class PipelineRunner:
             if adapter_config.exists():
                 mlflow.log_artifact(str(adapter_config), artifact_path="model")
 
-            finalize_manifest(model_cfg.output_dir)
+            final = finalize_manifest(model_cfg.output_dir,
+                                      log_history=hf_trainer.state.log_history)
             mlflow.log_artifact(str(manifest_path), artifact_path="model")
+            if final and final.get("metrics"):
+                logger.info("Version %s: best eval_loss %s at step %s",
+                            final["version"], final["metrics"]["best_eval_loss"],
+                            final["metrics"]["global_step"])
 
             mlflow.set_tag("model_local_path", model_cfg.output_dir)
             logger.info("Model trained and saved to %s", model_cfg.output_dir)
@@ -280,7 +305,7 @@ class PipelineRunner:
         import os
 
         from litigpt.inference.generator import RedditBotInference
-        from litigpt.training.tracking import MLflowTracker
+        from litigpt.training.tracking import DEFAULT_TRACKING_URI, MLflowTracker
 
         logger.info("[4/5] EVALUATING MODEL")
         logger.info("-" * 60)
@@ -293,6 +318,7 @@ class PipelineRunner:
             base_model=model_cfg.base_model,
             use_lora=True,
             load_in_4bit=True,
+            inference=inference_cfg,
         )
 
         logger.info("Model loaded. Testing with sample contexts...")
@@ -322,7 +348,7 @@ class PipelineRunner:
 
         # Log sample outputs to MLflow if tracking is available
         try:
-            tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "file:./mlruns")
+            tracking_uri = os.getenv("MLFLOW_TRACKING_URI", DEFAULT_TRACKING_URI)
             tracker = MLflowTracker(
                 experiment_name="reddit-chatbot-training",
                 tracking_uri=tracking_uri,
@@ -405,6 +431,7 @@ class PipelineRunner:
             available_users=bot_users,
             user_selector=user_selector,
             inference_config=self.config.inference.model_dump(),
+            strip_quoted_text=self.config.data.strip_quoted_text,
         )
 
         # Run bot

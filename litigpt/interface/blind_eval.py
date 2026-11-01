@@ -37,7 +37,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from litigpt.prompts import DEFAULT_HUMAN_HANDLE, render_thread
+from litigpt.config import InferenceConfig
+from litigpt.manifest import read_manifest
+from litigpt.prompts import DEFAULT_HUMAN_HANDLE, count_words, render_thread
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +241,7 @@ class BlindEvalInterface:
         seed: int | None = None,
         source: str = "model",
         responder=None,
+        inference: InferenceConfig | None = None,
     ):
         if len(available_users) < 2:
             raise ValueError(
@@ -257,6 +260,14 @@ class BlindEvalInterface:
         # not perturb the persona draw — with --seed set, the sequence of
         # personas stays reproducible no matter what gets rendered.
         self.display_rng = random.Random(seed if seed is None else seed + 1)
+
+        # The model's replies under min_reply_words are resampled, so the real
+        # comments the oracle replays are held to the same floor. Otherwise the
+        # ceiling would include two-word replies nobody can attribute, while
+        # the model condition never shows one, and the two scores would not
+        # measure the same thing.
+        self.inference = inference or InferenceConfig()
+        self.min_reply_words = self.inference.min_reply_words
 
         # Real comments. Used after the reveal so the guesser can calibrate
         # against what the persona actually sounds like, and as the source of
@@ -287,10 +298,17 @@ class BlindEvalInterface:
                 base_model=base_model,
                 use_lora=True,
                 load_in_4bit=load_in_4bit,
+                inference=self.inference,
             ))
             logger.info("Model ready")
 
         self.source = getattr(self.responder, "kind", source)
+        # Which version was judged. The adapter path differs between a pod and
+        # a laptop, and the same directory name gets reused across runs; the
+        # manifest's version does not. `litigpt.registry list` groups by it.
+        self.model_version = (
+            (read_manifest(model_path) or {}).get("version") if self.source == "model" else None
+        )
 
     # ------------------------------------------------------------------
     # Setup helpers
@@ -304,6 +322,8 @@ class BlindEvalInterface:
             for username, response in load_labelled_responses(
                 path, restrict_to=self.available_users
             ):
+                if count_words(response) < self.min_reply_words:
+                    continue
                 bucket = samples.setdefault(username, [])
                 if len(bucket) < per_user:
                     bucket.append(response)
@@ -448,6 +468,7 @@ class BlindEvalInterface:
             "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
             "round_id": round_state.round_id,
             "model_path": self.model_path,
+            "model_version": self.model_version,
             "base_model": self.base_model,
             # "model" rounds and "oracle" rounds answer different questions and
             # must never be averaged together; the scoreboard keeps them apart.
@@ -470,6 +491,9 @@ class BlindEvalInterface:
             "n_turns": len(round_state.turns),
             "self_id_attempts": round_state.self_id_attempts,
             "temperature": float(temperature),
+            # Rounds judged before and after the short-reply floor are not
+            # comparable; this says which side of it a round fell on.
+            "min_reply_words": self.min_reply_words,
             "transcript": [
                 {"user": t["user"], "bot": t["bot_raw"]} for t in round_state.turns
             ],
@@ -978,6 +1002,7 @@ def main():
         load_in_4bit=not args.no_4bit,
         seed=args.seed,
         source="oracle" if args.oracle else "model",
+        inference=config.inference,
     )
 
     interface.launch(share=args.share, server_port=args.port,

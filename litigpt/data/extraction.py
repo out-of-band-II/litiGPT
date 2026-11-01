@@ -185,32 +185,42 @@ class RedditDataExtractor:
 
         logger.info("Metadata saved: %s", metadata_file)
 
-    def build_conversation_threads(self, all_data_pl: pl.DataFrame) -> dict[str, list[dict]]:
-        """Build conversation threads from all subreddit data"""
+    def build_conversation_threads(self, comments: pl.DataFrame,
+                                   posts: pl.DataFrame | None = None) -> dict[str, dict]:
+        """
+        Index comments and posts by id, so a reply can be walked up to its post.
 
-        all_data = all_data_pl.to_dicts()
-        # Create lookup dictionaries
+        Posts come in separately. This used to take the comments file alone
+        and sort its rows into comments or posts by whether a row had a
+        'parent_id' key -- which every row of a DataFrame with that column
+        has. The post index was therefore always empty: every reply to a post
+        (10% of the eligible comments) was dropped for having no context, and
+        no training thread ever opened with its post, while the Reddit bot
+        opened every thread with one. Post rows are tagged type='post' here,
+        which is how preprocessing knows to render them with render_post.
+        """
         comments_by_id = {}
         comments_by_parent = {}
+        for item in comments.to_dicts():
+            item_id = item.get('id') or (item.get('name') or '').split('_')[-1]
+            comments_by_id[item_id] = item
+            parent_id = (item.get('parent_id') or '').split('_')[-1]
+            comments_by_parent.setdefault(parent_id, []).append(item)
+
         posts_by_id = {}
-
-        for item in all_data:
-            item_id = item.get('id') or item.get('name', '').split('_')[-1]
-
-            if item.get('type') == 'comment' or 'parent_id' in item:
-                comments_by_id[item_id] = item
-                pid = item.get('parent_id', '')
-                try:
-                    parent_id = pid.split('_')[-1]
-                except (AttributeError, ValueError):
-                    logger.error("Error processing parent_id for %s", item)
-                    continue
-                if parent_id not in comments_by_parent:
-                    comments_by_parent[parent_id] = []
-                comments_by_parent[parent_id].append(item)
-            else:
+        if posts is None:
+            logger.warning(
+                "No posts given to build_conversation_threads: every reply to a "
+                "post will have no context and be dropped."
+            )
+        else:
+            for item in posts.to_dicts():
+                item_id = item.get('id') or (item.get('name') or '').split('_')[-1]
+                item['type'] = 'post'
                 posts_by_id[item_id] = item
 
+        logger.info("Thread index: %d comments, %d posts",
+                    len(comments_by_id), len(posts_by_id))
         return {
             'comments_by_id': comments_by_id,
             'comments_by_parent': comments_by_parent,

@@ -7,9 +7,9 @@ import logging
 from pathlib import Path
 
 import gradio as gr
-import torch
 
 from litigpt.config import Config
+from litigpt.inference.generator import generate_reply
 from litigpt.model_utils import (
     DEFAULT_BASE_MODEL,
     DEFAULT_USERNAME,
@@ -91,35 +91,17 @@ class GradioChatInterface:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": context},
         ]
-        prompt = self.tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
+        inference = self.config.inference
+        return generate_reply(
+            self.model, self.tokenizer, messages,
+            max_new_tokens=int(max_tokens),
+            temperature=float(temperature),
+            top_p=inference.top_p,
+            top_k=inference.top_k,
+            repetition_penalty=inference.repetition_penalty,
+            min_words=inference.min_reply_words,
+            candidates=inference.reply_candidates,
         )
-
-        # Tokenize
-        inputs = self.tokenizer(
-            prompt, return_tensors="pt", truncation=True, max_length=2048
-        ).to(self.model.device)
-
-        # Generate
-        with torch.no_grad():
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=max_tokens,
-                temperature=temperature,
-                top_p=0.9,
-                top_k=50,
-                repetition_penalty=1.1,
-                do_sample=True,
-                pad_token_id=self.tokenizer.pad_token_id,
-            )
-
-        # Decode only the newly generated tokens
-        response = self.tokenizer.decode(
-            outputs[0][inputs["input_ids"].shape[1]:],
-            skip_special_tokens=True,
-        )
-
-        return response.strip()
 
     def create_interface(self):
         """Create Gradio interface"""

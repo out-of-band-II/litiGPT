@@ -20,9 +20,11 @@ data:
   max_pairs_per_user: 2000
   exclude_authors: ["[deleted]", "[removed]", "AutoModerator"]
   strip_quoted_text: true
-  min_comment_length: 10
-  max_comment_length: 512
-  min_score: 1
+  # Changed 2026-11; config.top30.yaml has the measurements.
+  min_comment_words: 5
+  max_comment_length: 2000
+  min_score: null
+  exclude_moderator_comments: true
 
 model:
   # phi-3-mini is the cheapest useful base and needs no gated-repo access.
@@ -87,6 +89,8 @@ inference:
   top_p: 0.9
   top_k: 50
   repetition_penalty: 1.1
+  min_reply_words: 5
+  reply_candidates: 3
 
 user_classification:
   strategy: "random"   # "random" or "keyword"
