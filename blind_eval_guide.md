@@ -139,7 +139,10 @@ https://<POD_ID>-<PORT>.proxy.runpod.net
 
 Pass `--host 0.0.0.0` so the app listens beyond localhost, and make sure the
 port is in the pod's exposed HTTP ports (editable on a running pod, not only
-at creation). Two properties of that proxy decide how you use it:
+at creation, but saving the edit resets the pod and erases everything outside
+`/workspace`). A Gradio share link (`--share --auth user:pass`) needs no
+exposed port at all; see the RunPod guide. Two properties of that proxy decide
+how you use it:
 
 - **It is public.** There is no authentication in front of it. The pod id is
   obscurity, not access control, and RunPod's documentation says as much.
@@ -158,7 +161,8 @@ bash scripts/pod_serve.sh blind --host 0.0.0.0 --auth mario:unaPasswordVera
 their own login. Verified behaviour with auth on: an anonymous visitor gets an
 empty loader page containing no persona names and no UI text, and the endpoint
 that actually invokes functions returns `401`. Launching on a non-localhost
-address without `--auth` logs a warning.
+address without `--auth` logs a warning; `--share` without it refuses to
+start, since a share link is public by construction.
 
 The login name is recorded as the round's `rater`, and a "Chi sta giocando"
 box in the settings lets someone name themselves when there is no login.
@@ -195,7 +199,7 @@ separate scores.
 | `--seed N` | Reproducible persona draw, for comparing two adapters on the same sequence. |
 | `--auth` | Require a login: `user:pass`, or several comma-separated. Mandatory for anything reachable by others. |
 | `--host` | Bind address. `0.0.0.0` to serve beyond localhost, which the RunPod proxy needs. |
-| `--share` | Public Gradio link. Prefer an SSH tunnel; if you use this, pair it with `--auth`. |
+| `--share` | Public Gradio link. Prefer an SSH tunnel; refused without `--auth`. |
 | `--no-4bit` | Full precision instead of 4-bit. |
 
 In-app: **Modalita** switches between multiple choice (2–8 options) and open

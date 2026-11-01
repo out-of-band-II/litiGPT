@@ -136,7 +136,7 @@ python launch_chat.py --interface {gradio|ollama|blind} --model models/litigpt_t
 
 | Interface | Default port | What it is |
 |---|---|---|
-| `gradio` | 7860 | Chat UI with persona picker and a slider for every `inference` setting (temperature, min reply words, candidates, max tokens, top-p, top-k, repetition penalty), each starting at the config's value. `--share` for a public link. |
+| `gradio` | 7860 | Chat UI with persona picker and a slider for every `inference` setting (temperature, min reply words, candidates, max tokens, top-p, top-k, repetition penalty), each starting at the config's value. `--share --auth user:pass` for a public link. |
 | `ollama` | 5000 | Terminal-styled web UI with token streaming, over Flask. |
 | `blind` | 7861 | Blind persona evaluation — see below. |
 
@@ -157,6 +157,12 @@ Serving from a RunPod pod instead of locally: `scripts/pod_serve.sh
 that launched it. It defaults to port 7870 and localhost deliberately — read
 its header before exposing it, since RunPod's HTTP proxy is public to anyone
 with the URL and this serves a model impersonating real, named people.
+
+To let someone else in, the simplest route is a Gradio share link, which needs
+no pod port: `pod_serve.sh chat --share --auth user:pass`, then read the
+`gradio.live` URL from the log. Both the chat app and the blind eval refuse
+`--share` without `--auth` (`litigpt/interface/access.py`), and the chat page
+says above the conversation that its replies are not the real users' words.
 
 ---
 

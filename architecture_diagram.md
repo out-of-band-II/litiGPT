@@ -205,6 +205,7 @@ the above from config.
 | Persona selection | `inference/classifier.py` |
 | Authorship scoring | `eval/attribution.py` |
 | Chat, streaming, blind eval | `interface/` |
+| Who can reach an interface (login, share link) | `interface/access.py` |
 | Reddit bot | `deployment/reddit_bot.py` |
 | Config schema | `config.py` |
 | Orchestration and every CLI entry point | `pipeline.py` |

@@ -378,6 +378,21 @@ project the app impersonates real, named people, so always pair it with
 Also note the proxy **drops requests after 100 seconds**. Fine on a healthy
 GPU, not fine on CPU or a starved host.
 
+**Gradio share link — public, and no pod change:**
+
+```bash
+bash scripts/pod_serve.sh chat --share --auth user:pass
+grep -o 'https://[^ ]*gradio.live' /workspace/serve/app.log
+```
+
+The app stays bound to `127.0.0.1` and Gradio tunnels out to a
+`https://<random>.gradio.live` URL, so no HTTP port has to be exposed. That
+matters on a pod created without one: changing a running pod's ports resets
+it, and the container disk (`/root/venv`, say) goes with it. The link dies
+when the app stops. It is public to anyone holding it, so both apps refuse
+`--share` without `--auth`. Everyone shares the one GPU: requests queue and
+are answered one at a time.
+
 ---
 
 ## 9. Money
@@ -576,6 +591,10 @@ ssh -N -L 7870:localhost:7870 litigpt-pod        # from your machine
 # serve it publicly, with a login
 ssh litigpt-pod "LITIGPT_PORT=7860 bash /workspace/litiGPT/scripts/pod_serve.sh \
     blind --host 0.0.0.0 --auth user:pass"
+
+# or share the chat through a gradio.live link, no exposed port needed
+ssh litigpt-pod "bash /workspace/litiGPT/scripts/pod_serve.sh chat --share --auth user:pass"
+ssh litigpt-pod "grep -o 'https://[^ ]*gradio.live' /workspace/serve/app.log"
 
 # stop the app / check on it
 ssh litigpt-pod "bash /workspace/litiGPT/scripts/pod_serve.sh stop"

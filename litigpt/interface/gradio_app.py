@@ -10,6 +10,7 @@ import gradio as gr
 
 from litigpt.config import Config, InferenceConfig
 from litigpt.inference.generator import generate_reply
+from litigpt.interface.access import AUTH_HELP, resolve_auth
 from litigpt.model_utils import (
     DEFAULT_BASE_MODEL,
     DEFAULT_USERNAME,
@@ -143,6 +144,9 @@ class GradioChatInterface:
                 """
                 # [Bot] Reddit Bot Chat Interface
                 Chat with your fine-tuned Reddit bot!
+
+                *Le risposte sono generate da un modello che imita lo stile
+                di utenti reali di Reddit. Non sono parole loro.*
                 """
             )
 
@@ -335,12 +339,15 @@ class GradioChatInterface:
 
         return demo
 
-    def launch(self, share: bool = False, server_port: int = 7860):
+    def launch(self, share: bool = False, server_port: int = 7860,
+               server_name: str = "127.0.0.1", auth=None):
         """Launch the Gradio interface"""
         demo = self.create_interface()
         demo.launch(
             share=share,
             server_port=server_port,
+            server_name=server_name,
+            auth=auth,
             css=CUSTOM_CSS,
             show_error=True,
         )
@@ -357,10 +364,19 @@ def main():
     parser.add_argument("--config", default="config.yaml", help="Config file path")
     parser.add_argument("--share", action="store_true",
                        help="Create public share link")
+    parser.add_argument("--host", default="127.0.0.1",
+                       help="Bind address. 0.0.0.0 to serve beyond localhost")
     parser.add_argument("--port", type=int, default=7860,
                        help="Server port")
+    parser.add_argument("--auth", default=None, help=AUTH_HELP)
 
     args = parser.parse_args()
+
+    # Before the model loads, so a refused share link costs nothing.
+    try:
+        auth = resolve_auth(args.auth, share=args.share, host=args.host)
+    except ValueError as e:
+        parser.error(str(e))
 
     # Create and launch interface
     interface = GradioChatInterface(
@@ -373,7 +389,8 @@ def main():
     print("Starting Reddit Bot Chat Interface...")
     print(f"{'='*60}\n")
 
-    interface.launch(share=args.share, server_port=args.port)
+    interface.launch(share=args.share, server_port=args.port,
+                     server_name=args.host, auth=auth)
 
 
 if __name__ == "__main__":

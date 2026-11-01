@@ -43,7 +43,7 @@ bash scripts/wsl_smoke_test.sh                           # full rehearsal, minut
 
 ```bash
 python launch_chat.py --model models/litigpt_top30_lora                        # Gradio  :7860
-python launch_chat.py --model models/litigpt_top30_lora --share                # public link
+python launch_chat.py --model models/litigpt_top30_lora --share --auth u:pw    # public link, login required
 python launch_chat.py --interface ollama --model <adapter> --port 5000         # streaming :5000
 python launch_chat.py --interface blind  --model <adapter> --classifier        # blind eval :7861
 python launch_chat.py --interface blind  --oracle                              # ceiling, no GPU
@@ -71,6 +71,7 @@ bash scripts/runpod_bootstrap.sh setup             # verify GPU, install package
 bash scripts/runpod_bootstrap.sh train             # run training
 runpodctl send data/training                       # from workstation, prints a code
 bash scripts/pod_serve.sh blind                    # serve detached (blind|chat|stop)
+bash scripts/pod_serve.sh chat --share --auth u:pw # public gradio.live link (URL in the log)
 NTFY_TOPIC=<topic> setsid nohup bash scripts/post_training_watchdog.sh \
     <training-pid> > /dev/null 2>&1 < /dev/null &  # archive + stop the pod
 ```

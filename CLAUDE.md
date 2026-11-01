@@ -27,7 +27,8 @@ contracts are in [architecture_diagram.md](architecture_diagram.md).
 - **`training/`** — `trainer.py` (QLoRA, loss masking, target detection),
   `tracking.py` (MLflow)
 - **`inference/`** — `generator.py`, `classifier.py` (persona selection)
-- **`interface/`** — `gradio_app.py`, `ollama.py`, `blind_eval.py`
+- **`interface/`** — `gradio_app.py`, `ollama.py`, `blind_eval.py`,
+  `access.py` (the login rule for anything reachable beyond a tunnel)
 - **`eval/`** — `attribution.py` (TF-IDF + logistic regression authorship)
 - **`deployment/`** — `reddit_bot.py`
 - **`prompts.py`** — the one definition of prompts, thread and post format,
@@ -189,7 +190,9 @@ auth failure for anyone who launched an interface without `--base-model`.
 
 **Adding an interface:** import from `prompts.py`. Do not rebuild the prompt
 or thread format, and generate through `generate_reply`, not
-`model.generate`. Add the module to both test guards.
+`model.generate`. Add the module to both test guards. If it takes `--share` or
+`--host`, parse `--auth` through `interface/access.resolve_auth`, which refuses
+a share link without a login.
 
 **Bringing an adapter home:** `scp` the watchdog's
 `/workspace/litigpt_<version>.tar.gz`, then
@@ -318,7 +321,9 @@ mlflow ui --backend-store-uri sqlite:///$(pwd)/mlflow.db --port 5000
 
 This reproduces how real, named people write.
 
-- Every bot reply carries a disclaimer; do not remove it
+- Every bot reply carries a disclaimer, and the chat page a notice that its
+  replies are not the real users' words; do not remove either
+- Anything served beyond an SSH tunnel requires a login (`--auth`)
 - Follow subreddit rules on bots
 - Blind-eval logs hold impersonations of real users and are gitignored
 - Do not use this to put words in someone's mouth where it could pass as

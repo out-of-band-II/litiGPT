@@ -31,7 +31,7 @@ def check_dependencies():
 
     return True
 
-def launch_gradio(model_path, base_model, config, share, port):
+def launch_gradio(model_path, base_model, config, share, port, host, auth):
     """Launch Gradio interface"""
     cmd = [
         sys.executable,
@@ -39,11 +39,14 @@ def launch_gradio(model_path, base_model, config, share, port):
         "--model", model_path,
         "--base-model", base_model,
         "--config", config,
+        "--host", host,
         "--port", str(port),
     ]
 
     if share:
         cmd.append("--share")
+    if auth:
+        cmd += ["--auth", auth]
 
     print("\n" + "="*60)
     print("Launching Gradio Interface...")
@@ -55,7 +58,7 @@ def launch_gradio(model_path, base_model, config, share, port):
     subprocess.run(cmd, check=False)
 
 def launch_blind(model_path, base_model, config, share, port, host,
-                 oracle, classifier, seed):
+                 oracle, classifier, seed, auth):
     """Launch the blind persona evaluation"""
     cmd = [
         sys.executable,
@@ -76,6 +79,8 @@ def launch_blind(model_path, base_model, config, share, port, host,
         cmd += ["--seed", str(seed)]
     if share:
         cmd.append("--share")
+    if auth:
+        cmd += ["--auth", auth]
 
     print("\n" + "="*60)
     print("Launching Blind Persona Evaluation...")
@@ -126,7 +131,7 @@ Examples:
   python launch_chat.py --interface ollama --model models/reddit_bot_lora
 
   # With public sharing
-  python launch_chat.py --model models/reddit_bot_lora --share
+  python launch_chat.py --model models/reddit_bot_lora --share --auth user:pass
 
   # Custom port
   python launch_chat.py --interface ollama --model models/reddit_bot_lora --port 8000
@@ -162,7 +167,14 @@ Examples:
     parser.add_argument(
         "--share",
         action="store_true",
-        help="Create public share link (Gradio and blind eval)"
+        help="Create public share link (Gradio and blind eval). Refused "
+             "without --auth"
+    )
+
+    parser.add_argument(
+        "--auth",
+        help="Gradio and blind eval: require a login, 'user:pass' or several "
+             "separated by commas. Needed for --share"
     )
 
     # Blind-evaluation options
@@ -186,11 +198,10 @@ Examples:
         help="Blind eval only: seed the persona draw for a reproducible session"
     )
 
-    # Ollama-specific options
     parser.add_argument(
         "--host",
         default="127.0.0.1",
-        help="Server host (Ollama and blind eval, default: 127.0.0.1)"
+        help="Server host (default: 127.0.0.1)"
     )
 
     # Common options
@@ -235,6 +246,7 @@ Examples:
             args.oracle,
             args.classifier,
             args.seed,
+            args.auth,
         )
     elif args.interface == "gradio":
         launch_gradio(
@@ -243,6 +255,8 @@ Examples:
             args.config,
             args.share,
             args.port,
+            args.host,
+            args.auth,
         )
     else:
         launch_ollama(

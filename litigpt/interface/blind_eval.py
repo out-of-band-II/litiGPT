@@ -877,15 +877,6 @@ class BlindEvalInterface:
     def launch(self, share: bool = False, server_port: int = 7861,
                server_name: str = "127.0.0.1", auth=None):
         demo = self.create_interface()
-
-        if auth is None and server_name not in ("127.0.0.1", "localhost"):
-            logger.warning(
-                "Serving on %s with no authentication. Anyone who can reach "
-                "this port can chat with a model impersonating real, named "
-                "people. Pass --auth user:pass unless the port is reachable "
-                "only through an SSH tunnel.", server_name,
-            )
-
         demo.launch(
             share=share,
             server_port=server_port,
@@ -904,6 +895,7 @@ def main():
     import argparse
 
     from litigpt.config import Config
+    from litigpt.interface.access import AUTH_HELP, resolve_auth
     from litigpt.model_utils import DEFAULT_BASE_MODEL, resolve_available_users
 
     parser = argparse.ArgumentParser(
@@ -935,25 +927,15 @@ def main():
     parser.add_argument("--port", type=int, default=7861)
     parser.add_argument(
         "--auth", default=None,
-        help="Require a login: 'user:pass', or several separated by commas. "
-             "The login name is recorded with each round. Use this whenever "
-             "the app is reachable by anyone but you — a RunPod HTTP port and "
-             "a --share link are both public to whoever has the URL.",
+        help=AUTH_HELP + " The login name is recorded with each round.",
     )
 
     args = parser.parse_args()
 
-    auth = None
-    if args.auth:
-        auth = []
-        for pair in args.auth.split(","):
-            pair = pair.strip()
-            if not pair or ":" not in pair:
-                parser.error(f"--auth entry {pair!r} is not 'user:pass'")
-            user, _, password = pair.partition(":")
-            if not user or not password:
-                parser.error(f"--auth entry {pair!r} needs both a user and a password")
-            auth.append((user, password))
+    try:
+        auth = resolve_auth(args.auth, share=args.share, host=args.host)
+    except ValueError as e:
+        parser.error(str(e))
 
     if not args.oracle and not args.model:
         parser.error("--model is required unless --oracle is given")

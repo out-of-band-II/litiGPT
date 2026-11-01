@@ -26,6 +26,11 @@
 #       --auth. The proxy also drops requests after 100 seconds, which is
 #       ample on a GPU and not on CPU.
 #
+#   Gradio share link (public — pass --share --auth user:pass)
+#       Gradio prints a https://<random>.gradio.live URL in the log. No pod
+#       port to expose and no pod restart, which the proxy route needs if the
+#       port is not exposed already. Both apps refuse --share without --auth.
+#
 # usage: pod_serve.sh <blind|chat|stop> [extra args passed to the app]
 
 set -euo pipefail
@@ -124,7 +129,7 @@ case "$MODE" in
              --model "$ADAPTER"
              --base-model "$BASE_MODEL"
              --config "$CONFIG"
-             --port "$PORT")
+             --host "$HOST" --port "$PORT")
         ;;
     *)
         echo "Unknown mode: $MODE (expected blind, oracle, chat or stop)" >&2
