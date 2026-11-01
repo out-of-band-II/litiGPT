@@ -142,8 +142,8 @@ class GradioChatInterface:
         with gr.Blocks(title="Reddit Bot Chat") as demo:
             gr.Markdown(
                 """
-                # [Bot] Reddit Bot Chat Interface
-                Chat with your fine-tuned Reddit bot!
+                # [Bot] LitiGPT Chat Interface
+                The cunning of r/litigi at your fingertips
 
                 *Le risposte sono generate da un modello che imita lo stile
                 di utenti reali di Reddit. Non sono parole loro.*
@@ -265,6 +265,7 @@ class GradioChatInterface:
                     ["Benvenuto su litigi!"],
                     ["Mi hanno bannato da r/italy"],
                     ["Chi è talpa?"],
+                    ["Dove fai la spesa?"]
                 ],
                 inputs=msg,
                 label="Example Questions",
