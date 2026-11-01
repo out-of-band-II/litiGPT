@@ -8,7 +8,7 @@ from pathlib import Path
 
 import gradio as gr
 
-from litigpt.config import Config
+from litigpt.config import Config, InferenceConfig
 from litigpt.inference.generator import generate_reply
 from litigpt.model_utils import (
     DEFAULT_BASE_MODEL,
@@ -62,11 +62,10 @@ class GradioChatInterface:
 
     def generate_response(self,
                          message: str,
-                         history: list[tuple[str, str]],
+                         history: list[dict],
                          username: str | None = None,
-                         temperature: float = 0.8,
-                         max_tokens: int = 256) -> str:
-        """Generate response to user message"""
+                         settings: InferenceConfig | None = None) -> str:
+        """Generate a response; settings default to the config's inference."""
 
         # Build prompt — always include username
         effective_user = username or (self.available_users[0] if self.available_users else DEFAULT_USERNAME)
@@ -91,16 +90,31 @@ class GradioChatInterface:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": context},
         ]
-        inference = self.config.inference
+        s = settings or self.config.inference
         return generate_reply(
             self.model, self.tokenizer, messages,
-            max_new_tokens=int(max_tokens),
+            max_new_tokens=s.max_new_tokens,
+            temperature=s.temperature,
+            top_p=s.top_p,
+            top_k=s.top_k,
+            repetition_penalty=s.repetition_penalty,
+            min_words=s.min_reply_words,
+            candidates=s.reply_candidates,
+        )
+
+    @staticmethod
+    def settings_from_controls(temperature, max_tokens, top_p, top_k,
+                               repetition_penalty, min_words,
+                               candidates) -> InferenceConfig:
+        """The sampling sliders' values, in the order create_interface wires them."""
+        return InferenceConfig(
             temperature=float(temperature),
-            top_p=inference.top_p,
-            top_k=inference.top_k,
-            repetition_penalty=inference.repetition_penalty,
-            min_words=inference.min_reply_words,
-            candidates=inference.reply_candidates,
+            max_new_tokens=int(max_tokens),
+            top_p=float(top_p),
+            top_k=int(top_k),
+            repetition_penalty=float(repetition_penalty),
+            min_reply_words=int(min_words),
+            reply_candidates=int(candidates),
         )
 
     def create_interface(self):
@@ -148,23 +162,72 @@ class GradioChatInterface:
                     else:
                         username_selector = gr.Textbox(visible=False)
 
+                    # Every slider starts at the config's value, so the page
+                    # opens on what the config tuned and reloading resets it.
+                    inf = self.config.inference
                     temperature = gr.Slider(
                         minimum=0.1,
                         maximum=1.5,
-                        value=0.8,
-                        step=0.1,
+                        value=inf.temperature,
+                        step=0.05,
                         label="Temperature",
                         info="Higher = more creative",
                     )
 
+                    min_words = gr.Slider(
+                        minimum=0,
+                        maximum=30,
+                        value=inf.min_reply_words,
+                        step=1,
+                        label="Min reply words",
+                        info="Shorter replies are resampled; 0 turns it off",
+                    )
+
                     max_tokens = gr.Slider(
-                        minimum=50,
+                        minimum=32,
                         maximum=512,
-                        value=256,
-                        step=50,
+                        value=inf.max_new_tokens,
+                        step=16,
                         label="Max Tokens",
                         info="Maximum response length",
                     )
+
+                    with gr.Accordion("More sampling", open=False):
+                        candidates = gr.Slider(
+                            minimum=1,
+                            maximum=8,
+                            value=inf.reply_candidates,
+                            step=1,
+                            label="Reply candidates",
+                            info="Sampled at once; the first over the word "
+                                 "floor wins. Unused when the floor is 0",
+                        )
+                        top_p = gr.Slider(
+                            minimum=0.1,
+                            maximum=1.0,
+                            value=inf.top_p,
+                            step=0.05,
+                            label="Top-p",
+                        )
+                        top_k = gr.Slider(
+                            minimum=0,
+                            maximum=200,
+                            value=inf.top_k,
+                            step=5,
+                            label="Top-k",
+                            info="0 turns it off",
+                        )
+                        repetition_penalty = gr.Slider(
+                            minimum=1.0,
+                            maximum=1.5,
+                            value=inf.repetition_penalty,
+                            step=0.05,
+                            label="Repetition penalty",
+                        )
+
+                    # Order matches settings_from_controls.
+                    sampling = [temperature, max_tokens, top_p, top_k,
+                                repetition_penalty, min_words, candidates]
 
                     gr.Markdown("### Info")
                     info_text = f"""
@@ -186,7 +249,7 @@ class GradioChatInterface:
             )
 
             # Event handlers
-            def respond(message, chat_history, username, temp, max_tok):
+            def respond(message, chat_history, username, *controls):
                 chat_history = chat_history or []
                 if not message.strip():
                     return "", chat_history
@@ -195,8 +258,7 @@ class GradioChatInterface:
                     message,
                     chat_history,
                     username or None,
-                    temp,
-                    max_tok,
+                    self.settings_from_controls(*controls),
                 )
 
                 return "", chat_history + [
@@ -204,7 +266,7 @@ class GradioChatInterface:
                     {"role": "assistant", "content": response},
                 ]
 
-            def retry_last(chat_history, username, temp, max_tok):
+            def retry_last(chat_history, username, *controls):
                 chat_history = chat_history or []
 
                 # Walk back to the last user message, dropping it and anything
@@ -224,8 +286,7 @@ class GradioChatInterface:
                     last_message,
                     chat_history,
                     username or None,
-                    temp,
-                    max_tok,
+                    self.settings_from_controls(*controls),
                 )
 
                 return chat_history + [
@@ -236,13 +297,13 @@ class GradioChatInterface:
             # Wire up events
             msg.submit(
                 respond,
-                [msg, chatbot, username_selector, temperature, max_tokens],
+                [msg, chatbot, username_selector, *sampling],
                 [msg, chatbot],
             )
 
             submit.click(
                 respond,
-                [msg, chatbot, username_selector, temperature, max_tokens],
+                [msg, chatbot, username_selector, *sampling],
                 [msg, chatbot],
             )
 
@@ -250,7 +311,7 @@ class GradioChatInterface:
 
             retry.click(
                 retry_last,
-                [chatbot, username_selector, temperature, max_tokens],
+                [chatbot, username_selector, *sampling],
                 chatbot,
             )
 

@@ -137,6 +137,59 @@ class TestOracleHeldToTheSameFloor:
         ]
 
 
+def _chat_page(monkeypatch, inference=None):
+    """The chat page with generate_reply stubbed out.
+
+    Returns the page, a handler-by-name lookup that fills the sliders with
+    their starting values, and the list of (messages, settings) it was sent.
+    """
+    gr = pytest.importorskip("gradio")
+    from litigpt.config import Config
+    from litigpt.interface import gradio_app
+
+    app = gradio_app.GradioChatInterface.__new__(gradio_app.GradioChatInterface)
+    app.config = Config(inference=inference or InferenceConfig())
+    app.available_users = ["alice"]
+    app.model = app.tokenizer = None
+
+    calls = []
+    monkeypatch.setattr(gradio_app, "generate_reply",
+                        lambda model, tokenizer, messages, **kw:
+                        calls.append((messages, kw)) or "ok")
+
+    demo = app.create_interface()
+
+    def handler(name, *leading):
+        fn = next(f for f in demo.fns.values() if f.fn.__name__ == name)
+        args = [c.value if isinstance(c, gr.Slider) else None for c in fn.inputs]
+        args[:len(leading)] = leading
+        return fn, args
+
+    return demo, handler, calls
+
+
+class TestChatSliders:
+    """The chat page's sampling sliders reach generate_reply by position, so
+    a slider added or moved out of order would send, say, the word floor in
+    as top_k -- and nothing would raise."""
+
+    def test_each_slider_starts_at_the_config_and_reaches_its_setting(self, monkeypatch):
+        # All distinct, so a swap between any two sliders shows.
+        inference = InferenceConfig(
+            temperature=0.65, max_new_tokens=208, top_p=0.85, top_k=35,
+            repetition_penalty=1.15, min_reply_words=7, reply_candidates=4,
+        )
+        _, handler, calls = _chat_page(monkeypatch, inference)
+        respond, args = handler("respond", "ciao", [], "alice")
+        respond.fn(*args)
+
+        assert calls[-1][1] == {
+            "temperature": 0.65, "max_new_tokens": 208, "top_p": 0.85,
+            "top_k": 35, "repetition_penalty": 1.15,
+            "min_words": 7, "candidates": 4,
+        }
+
+
 class TestOneGenerationPath:
     """Source guard, like TestNoSecondImplementation in test_prompts: these
     modules need a loaded model to exercise, so check that none of them

@@ -136,7 +136,7 @@ python launch_chat.py --interface {gradio|ollama|blind} --model models/litigpt_t
 
 | Interface | Default port | What it is |
 |---|---|---|
-| `gradio` | 7860 | Chat UI with persona picker and sampling controls. `--share` for a public link. |
+| `gradio` | 7860 | Chat UI with persona picker and a slider for every `inference` setting (temperature, min reply words, candidates, max tokens, top-p, top-k, repetition penalty), each starting at the config's value. `--share` for a public link. |
 | `ollama` | 5000 | Terminal-styled web UI with token streaming, over Flask. |
 | `blind` | 7861 | Blind persona evaluation — see below. |
 
