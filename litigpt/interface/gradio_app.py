@@ -32,6 +32,24 @@ CUSTOM_CSS = """
 }
 """
 
+def message_text(content) -> str:
+    """A chat message's text, in whatever shape Gradio hands it back.
+
+    Gradio 6 returns each Chatbot message's content as a list of parts,
+    [{"text": "ciao", "type": "text"}], even when it was given a string.
+    Passed on as-is, render_thread wrote that list's repr into the thread, so
+    every turn after the first reached the model in a shape it never saw --
+    and on a retry it copied the shape into its reply.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, dict):
+        return content.get("text") or ""
+    if isinstance(content, list):
+        return "\n".join(t for t in map(message_text, content) if t)
+    return ""
+
+
 class GradioChatInterface:
     def __init__(self,
                  model_path: str,
@@ -78,7 +96,7 @@ class GradioChatInterface:
             [
                 (
                     DEFAULT_HUMAN_HANDLE if turn.get("role") == "user" else effective_user,
-                    turn.get("content", ""),
+                    message_text(turn.get("content")),
                 )
                 for turn in history or []
             ]
@@ -279,7 +297,7 @@ class GradioChatInterface:
                 if last_user is None:
                     return chat_history
 
-                last_message = chat_history[last_user].get("content", "")
+                last_message = message_text(chat_history[last_user].get("content"))
                 chat_history = chat_history[:last_user]
 
                 response = self.generate_response(

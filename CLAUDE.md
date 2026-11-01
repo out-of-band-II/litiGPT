@@ -124,6 +124,16 @@ completed adapter; the watchdog names its archive by version; and
 `python -m litigpt.registry import` unpacks it into `models/<version>/`,
 refusing to overwrite. Blind-eval rounds record the version they judged.
 
+**Gradio 6 hands chat history back as parts, not strings.** A Chatbot given
+`{"role": "user", "content": "ciao"}` returns
+`"content": [{"text": "ciao", "type": "text"}]` on the next event. The chat
+app passed that to `render_thread`, so every turn after a conversation's
+first reached the model as a Python list repr, and on Retry the model copied
+the repr into its reply — the only symptom that surfaced. Read history through
+`gradio_app.message_text`. `tests/test_generation.py` round-trips history
+through a real Chatbot to pin it; the blind eval is immune because it keeps
+its own transcript in `state.turns`.
+
 ## Persona selection is deliberately not learned
 
 `inference/classifier.py` has a `UserSelector` protocol, `RandomUserSelector`,
@@ -316,4 +326,4 @@ This reproduces how real, named people write.
 
 ---
 
-**Last Updated**: September 2026
+**Last Updated**: November 2026

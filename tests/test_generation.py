@@ -190,6 +190,44 @@ class TestChatSliders:
         }
 
 
+class TestChatHistoryAsGradioReturnsIt:
+    """Gradio 6 hands a Chatbot's history back with each message's content as
+    a list of parts, [{"text": ..., "type": "text"}], not the string it was
+    given. Rendered as-is, every turn after the first reached the model as a
+    Python list repr -- no error, a thread unlike any it trained on, and on a
+    retry a reply that copied the repr."""
+
+    @staticmethod
+    def _round_trip(respond, turns):
+        # The chatbot is the second input of both handlers' wiring after msg;
+        # send the history through it as the browser's copy would come back.
+        chatbot = next(c for c in respond.inputs if type(c).__name__ == "Chatbot")
+        return chatbot.preprocess(chatbot.postprocess(turns))
+
+    def test_follow_up_and_retry_see_plain_text(self, monkeypatch):
+        from litigpt.prompts import DEFAULT_HUMAN_HANDLE as H
+
+        _, handler, calls = _chat_page(monkeypatch)
+        respond, _ = handler("respond")
+        history = self._round_trip(respond, [
+            {"role": "user", "content": "ciao"},
+            {"role": "assistant", "content": "ciao a te"},
+            {"role": "user", "content": "e quindi?"},
+            {"role": "assistant", "content": "boh"},
+        ])
+
+        respond, args = handler("respond", "dimmi", history, "alice")
+        respond.fn(*args)
+        assert calls[-1][0][1]["content"] == (
+            f"{H}: ciao\nalice: ciao a te\n{H}: e quindi?\nalice: boh\n{H}: dimmi"
+        )
+
+        retry, args = handler("retry_last", history, "alice")
+        retried = retry.fn(*args)
+        assert calls[-1][0][1]["content"] == f"{H}: ciao\nalice: ciao a te\n{H}: e quindi?"
+        assert retried[-2] == {"role": "user", "content": "e quindi?"}
+
+
 class TestOneGenerationPath:
     """Source guard, like TestNoSecondImplementation in test_prompts: these
     modules need a loaded model to exercise, so check that none of them
