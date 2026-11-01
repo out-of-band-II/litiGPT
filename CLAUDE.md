@@ -244,8 +244,9 @@ mlflow 3.16.1        torchvision/torchaudio UNINSTALLED
 
 **Pods never stop themselves.** A finished job leaves the GPU billing
 indefinitely. `scripts/post_training_watchdog.sh` archives the adapter and
-stops the pod, but needs an API key configured on the pod first. See
-[runpod_guide.md](runpod_guide.md).
+stops the pod, but needs an API key configured on the pod first. Launched with
+`NTFY_TOPIC` set, it also pushes progress, the outcome and the stop to a phone.
+See [runpod_guide.md](runpod_guide.md).
 
 Reference run: 30 personas, ~54k examples, phi-3-mini r=32, 3h35m on an RTX
 4090 at $0.74/hr. eval_loss converged at roughly two epochs; a third bought

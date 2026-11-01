@@ -427,6 +427,24 @@ Two things follow:
 
 Revoke it in the same **Settings → API Keys** page when the run is done.
 
+**Push notifications.** Give the watchdog an ntfy.sh topic and it reports the
+run to a phone: on start, at the halfway step, when training ends (finished,
+early-stopped or crashed, with eval_loss), and just before it stops the pod —
+before, because nothing on the pod runs after. An urgent one goes out if the
+pod is left billing. The progress and outcome messages come from
+`scripts/training_notifier.py`, which the watchdog runs itself; no topic, no
+messages. Launch the watchdog as one backgrounded command, after checking that
+`train.pid` holds python's PID and not a wrapper shell's:
+
+```bash
+cd /workspace; NTFY_TOPIC=<topic> setsid nohup bash litiGPT/scripts/post_training_watchdog.sh \
+    "$(cat train.pid)" > /dev/null 2>&1 < /dev/null &
+```
+
+An ntfy.sh topic has no access control beyond its name: anyone who guesses it
+reads the messages. Keep the name out of tracked files; the messages carry only
+steps and losses.
+
 ---
 
 ## 10. A debugging ladder

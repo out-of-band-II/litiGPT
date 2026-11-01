@@ -71,12 +71,15 @@ bash scripts/runpod_bootstrap.sh setup             # verify GPU, install package
 bash scripts/runpod_bootstrap.sh train             # run training
 runpodctl send data/training                       # from workstation, prints a code
 bash scripts/pod_serve.sh blind                    # serve detached (blind|chat|stop)
-setsid nohup bash scripts/post_training_watchdog.sh &   # archive + stop the pod
+NTFY_TOPIC=<topic> setsid nohup bash scripts/post_training_watchdog.sh \
+    <training-pid> > /dev/null 2>&1 < /dev/null &  # archive + stop the pod
 ```
 
-The watchdog needs `runpodctl config --apiKey ...` set on the pod, or it
-archives the adapter and leaves the GPU billing. Details in
-[runpod_guide.md](runpod_guide.md).
+The watchdog needs the training process's own PID (python's, not a wrapper
+shell's), and `runpodctl config --apiKey ...` set on the pod, or it archives
+the adapter and leaves the GPU billing. `NTFY_TOPIC` is optional: with it, the
+run's progress and end are pushed to a phone. Details in
+[runpod_guide.md](runpod_guide.md) §9.
 
 ---
 
