@@ -236,6 +236,10 @@ def build_manifest(config, config_path: str | None, *, provenance: str) -> dict:
         "base_model": config.model.base_model,
         "users": list(counts),
         "examples_per_user": counts,
+        # Secondary account -> the persona it was trained as. A persona's
+        # examples include every account mapped to it here, so this is part
+        # of who the adapter impersonates, not a preprocessing detail.
+        "author_aliases": dict(config.data.author_aliases),
         "dataset": dataset,
         "config_file": str(config_path) if config_path else None,
         "config": config.model_dump(),

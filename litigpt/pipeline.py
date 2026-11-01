@@ -29,7 +29,7 @@ class PipelineRunner:
         logger.info("-" * 60)
 
         data = self.config.data
-        extractor = RedditDataExtractor(data.raw_dir)
+        extractor = RedditDataExtractor(data.raw_dir, author_aliases=data.author_aliases)
 
         if data.target_usernames:
             logger.info("Cohort: %d users from config", len(data.target_usernames))
@@ -95,7 +95,7 @@ class PipelineRunner:
 
         # Index every comment and post, so each reply can be given the thread
         # above it -- up to and including the post it was written under.
-        extractor = RedditDataExtractor(data.raw_dir)
+        extractor = RedditDataExtractor(data.raw_dir, author_aliases=data.author_aliases)
         all_comments = extractor.load_data(data.comments_filename)
         all_posts = extractor.load_data(data.submission_filename)
         if "title" not in all_posts.columns:

@@ -162,6 +162,57 @@ class TestFilters:
         assert _filter([{"body": "[deleted]", "score": 1}], min_words=0) == []
 
 
+class TestAuthorAliases:
+    """One person is one persona. SpiegoReloaded is SpiegoLeDiscussioni's 2025
+    account and Generale_Zod is Amlach's: left apart, each pair is two
+    personas the model cannot separate, and the blind eval scores them as
+    confusions."""
+
+    @staticmethod
+    def _dump(tmp_path):
+        pl.DataFrame({
+            "id": ["c1", "c2", "c3", "c4", "c5"],
+            "author": ["main", "alt", "alt", "other", "other"],
+            "parent_id": ["t3_p1"] * 5,
+            "body": ["uno", "due", "tre", "quattro", "cinque"],
+        }).write_parquet(tmp_path / "comments.parquet")
+        pl.DataFrame({"id": ["p1"], "author": ["alt"], "title": ["t"], "selftext": [""]}
+                     ).write_parquet(tmp_path / "posts.parquet")
+
+    def test_a_merged_person_is_ranked_on_all_their_accounts(self, tmp_path):
+        self._dump(tmp_path)
+        ext = RedditDataExtractor(str(tmp_path), author_aliases={"alt": "main"})
+        users = ext.extract_multiple_users(
+            comments_file="comments.parquet", posts_file="posts.parquet",
+            top_n=1, min_comments_per_user=1,
+        )
+        # Apart, "other" (2) would outrank "main" (1); together main has 3.
+        assert list(users) == ["main"]
+        data = users["main"]
+        assert data.filter(pl.col("type") == "comment").height == 3
+        assert data.filter(pl.col("type") == "post").height == 1
+
+    def test_context_names_the_main_account(self, tmp_path):
+        self._dump(tmp_path)
+        ext = RedditDataExtractor(str(tmp_path), author_aliases={"alt": "main"})
+        threads = ext.build_conversation_threads(ext.load_data("comments.parquet"),
+                                                 ext.load_data("posts.parquet"))
+        assert threads["comments_by_id"]["c2"]["author"] == "main"
+        assert threads["posts_by_id"]["p1"]["author"] == "main"
+
+    def test_a_misspelt_alias_raises_instead_of_merging_nothing(self, tmp_path):
+        self._dump(tmp_path)
+        ext = RedditDataExtractor(str(tmp_path), author_aliases={"Alt": "main"})
+        with pytest.raises(ValueError, match="Alt"):
+            ext.extract_multiple_users(comments_file="comments.parquet",
+                                       posts_file="posts.parquet", top_n=1,
+                                       min_comments_per_user=1)
+
+    def test_chains_are_refused(self):
+        with pytest.raises(ValueError, match="themselves aliases"):
+            RedditDataExtractor("x", author_aliases={"a": "b", "b": "c"})
+
+
 class TestSplit:
     def test_seeded_split_is_reproducible_and_leaves_input_alone(self):
         pre = RedditDataPreprocessor()

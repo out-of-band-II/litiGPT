@@ -12,18 +12,60 @@ import polars as pl
 logger = logging.getLogger(__name__)
 
 class RedditDataExtractor:
-    def __init__(self, data_dir: str):
+    def __init__(self, data_dir: str, author_aliases: dict[str, str] | None = None):
+        """
+        Args:
+            data_dir: Directory holding the raw dump.
+            author_aliases: Secondary account -> the person's main account.
+                Applied to every file loaded here, so cohort ranking, each
+                persona's data and the speaker names in thread context all
+                see one author. See DataConfig.author_aliases.
+        """
         self.data_dir = Path(data_dir)
+        self.author_aliases = dict(author_aliases or {})
+        chained = sorted(set(self.author_aliases) & set(self.author_aliases.values()))
+        if chained:
+            raise ValueError(
+                f"author_aliases maps to accounts that are themselves aliases: {chained}. "
+                "Point every secondary account straight at the main one."
+            )
+        self._aliases_seen: set[str] = set()
 
     def load_data(self, filename: str) -> pl.DataFrame:
-        """Load JSONL or Parquet file automatically"""
+        """Load JSONL or Parquet file automatically, with author aliases applied"""
         filepath = self.data_dir / filename
 
         if filepath.suffix == '.parquet':
-            return pl.read_parquet(filepath)
-        if filepath.suffix == '.jsonl':
-            return pl.read_ndjson(filepath, infer_schema_length=None)
-        raise ValueError(f"Unsupported format: {filepath.suffix}")
+            df = pl.read_parquet(filepath)
+        elif filepath.suffix == '.jsonl':
+            df = pl.read_ndjson(filepath, infer_schema_length=None)
+        else:
+            raise ValueError(f"Unsupported format: {filepath.suffix}")
+
+        if self.author_aliases and "author" in df.columns:
+            present = set(df["author"].unique().to_list()) & set(self.author_aliases)
+            self._aliases_seen |= present
+            df = df.with_columns(pl.col("author").replace(self.author_aliases))
+        return df
+
+    def check_aliases_found(self) -> None:
+        """
+        Raise if an alias names no account in the files loaded so far.
+
+        A misspelt secondary account does nothing at all -- it stays a
+        separate author, and the merge it was meant to make silently doesn't
+        happen. Call after loading the comments.
+        """
+        missing = sorted(set(self.author_aliases) - self._aliases_seen)
+        if missing:
+            raise ValueError(
+                f"author_aliases names accounts with no comments or posts in the dump: "
+                f"{missing}. Check the spelling (usernames are case-sensitive)."
+            )
+        if self.author_aliases:
+            logger.info("Merged %d secondary accounts into their main accounts: %s",
+                        len(self.author_aliases),
+                        ", ".join(f"{a} -> {m}" for a, m in sorted(self.author_aliases.items())))
 
     def select_top_users(self,
                          comments: pl.DataFrame,
@@ -107,6 +149,8 @@ class RedditDataExtractor:
         comments = self.load_data(comments_file)
         logger.info("Loading posts from %s...", posts_file)
         posts = self.load_data(posts_file)
+        # Before ranking: a merged person is ranked on all their accounts.
+        self.check_aliases_found()
 
         if not usernames:
             if top_n <= 0:

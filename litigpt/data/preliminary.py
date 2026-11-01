@@ -152,11 +152,14 @@ def process_reddit_jsonl_to_parquet(
                     row[col] = str(row[col])
         df = pl.DataFrame(batch, schema=fixed_schema)
 
-        # Cast created_utc from string epoch to Datetime
+        # Cast created_utc from string epoch *seconds* to Datetime. Casting
+        # the number straight to Datetime('ms') read it as milliseconds and
+        # put every comment in January 1970; nothing in training reads the
+        # date, which is how it went unnoticed.
         if 'created_utc' in df.columns:
             df = df.with_columns(
-                pl.col('created_utc')
-                .cast(pl.Float64, strict=False)
+                (pl.col('created_utc').cast(pl.Float64, strict=False) * 1000)
+                .cast(pl.Int64)
                 .cast(pl.Datetime('ms'))
                 .alias('created_utc')
             )

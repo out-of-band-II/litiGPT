@@ -103,6 +103,9 @@ def describe(path: Path, manifest: dict | None, scores: dict[str, dict]) -> dict
         "directory": path.name,
         "base": (manifest.get("base_model") or "").rsplit("/", maxsplit=1)[-1],
         "users": len(manifest.get("users") or []),
+        # Secondary accounts folded into those personas; the map itself is
+        # in the manifest's author_aliases.
+        "merged": len(manifest.get("author_aliases") or {}),
         "examples": (manifest.get("dataset") or {}).get("train", {}).get("lines"),
         "filters": _filters(manifest),
         "best_eval": metrics.get("best_eval_loss"),
@@ -164,7 +167,7 @@ def import_adapter(source: str | Path, models_dir: str | Path = DEFAULT_MODELS_D
 
 
 def _print_table(rows: list[dict]) -> None:
-    columns = ["version", "directory", "base", "users", "examples", "filters",
+    columns = ["version", "directory", "base", "users", "merged", "examples", "filters",
                "best_eval", "steps", "commit", "blind_eval", "notes"]
     cells = [[("" if r.get(c) is None else str(r.get(c))) for c in columns] for r in rows]
     widths = [max([len(c)] + [len(row[i]) for row in cells]) for i, c in enumerate(columns)]

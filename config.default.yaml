@@ -29,6 +29,12 @@ data:
 
   exclude_authors: ["[deleted]", "[removed]", "AutoModerator"]
 
+  # Secondary account -> the same person's main account, so one person is one
+  # persona: ranked on all their comments and trained under one name. An
+  # alias that names no account in the dump raises. The map is copied into
+  # every adapter's manifest. config.runpod_qwen7b.yaml has the r/litigi one.
+  author_aliases: {}
+
   # Drop the quoted parent ("> ...") from a user's own reply. The parent is
   # already supplied as context, so keeping it teaches the model to copy.
   strip_quoted_text: true

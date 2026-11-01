@@ -28,6 +28,14 @@ class DataConfig(BaseModel):
     max_pairs_per_user: int = 0
     # Never treat these as trainable personas.
     exclude_authors: list[str] = ["[deleted]", "[removed]", "AutoModerator"]
+    # Secondary account -> the same person's main account. Applied as the dump
+    # loads, so one person is one persona: ranked on all their comments,
+    # trained under one name, and named once in thread context. Without it
+    # SpiegoReloaded (SpiegoLeDiscussioni's account from 2025) would enter the
+    # top 35 as a second persona for the same writer -- a pair the model
+    # cannot separate and the blind eval would score as confusions. An alias
+    # that names no account in the dump raises, rather than merging nothing.
+    author_aliases: dict[str, str] = {}
     # Drop the quoted parent text ("> ...") from a user's own reply. The parent
     # is already supplied as context, so keeping it teaches the model to copy.
     strip_quoted_text: bool = True

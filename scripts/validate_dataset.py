@@ -60,7 +60,7 @@ def load(path: Path):
     return rows
 
 
-def check_split(name, rows, r: Report):
+def check_split(name, rows, r: Report, max_seq_length: int = 1024):
     print(f"\n{name}: {len(rows):,} examples")
     if not rows:
         r.fail(f"{name} is empty")
@@ -118,9 +118,12 @@ def check_split(name, rows, r: Report):
         tok = [n / CHARS_PER_TOK for n in lengths]
         p50, p95 = tok[len(tok) // 2], tok[int(len(tok) * 0.95)]
         r.info(f"est. tokens/example: median {p50:.0f}, p95 {p95:.0f}, max {tok[-1]:.0f}")
-        over = sum(1 for t in tok if t > 512)
+        # From the config, not a constant: this said 512 for months after
+        # training moved to 1024, and reported 5% truncation that wasn't.
+        over = sum(1 for t in tok if t > max_seq_length)
         if over:
-            r.info(f"{over:,} ({100*over/len(tok):.1f}%) exceed max_seq_length 512 and will be truncated")
+            r.info(f"{over:,} ({100*over/len(tok):.1f}%) exceed max_seq_length "
+                   f"{max_seq_length} and will be truncated")
     return users
 
 
@@ -136,12 +139,14 @@ def main():
     ap.add_argument("--strict", action="store_true", help="treat warnings as failures")
     args = ap.parse_args()
 
+    max_seq_length = 1024  # TrainingConfig's default
     if args.data_dir:
         data_dir = Path(args.data_dir)
     elif args.config:
         import yaml
         cfg = yaml.safe_load(Path(args.config).read_text(encoding="utf-8")) or {}
         data_dir = Path((cfg.get("data") or {}).get("training_dir", "data/training"))
+        max_seq_length = int((cfg.get("training") or {}).get("max_seq_length", max_seq_length))
     else:
         ap.error("pass --config or --data-dir")
 
@@ -153,8 +158,8 @@ def main():
         if not p.exists():
             raise SystemExit(f"missing {p} — run the preprocess step first")
 
-    train_users = check_split("train.jsonl", load(train_p), r)
-    val_users = check_split("val.jsonl", load(val_p), r)
+    train_users = check_split("train.jsonl", load(train_p), r, max_seq_length)
+    val_users = check_split("val.jsonl", load(val_p), r, max_seq_length)
 
     print(f"\ncohort: {len(train_users)} users")
     if train_users:

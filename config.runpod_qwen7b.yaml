@@ -26,13 +26,36 @@ data:
   comments_filename: "litigi_comments.parquet"
   processed_dir: "/workspace/data/processed"
   training_dir: "/workspace/data/training"
-  # Same 30-persona cohort as config.top30.yaml, selected automatically so it
-  # stays reproducible from the raw dump. This file differs from that one only
-  # in its paths.
+  # The first Qwen adapter used config.top30.yaml's 30. From 2026-11 the top
+  # 35 people, ranked after merging each person's accounts (author_aliases):
+  # that brings in tommyrugby (rank 31 before merging) and the next few.
   target_usernames: []
-  top_n_users: 30
+  top_n_users: 35
   max_pairs_per_user: 2000
   exclude_authors: ["[deleted]", "[removed]", "AutoModerator"]
+  # Secondary account -> the persona it trains as. Confirmed by the user
+  # (2026-11-01), who knows the community; the persona keeps the name of the
+  # account with more comments. Candidates came from two scans: the
+  # attribution classifier on cohort members, and posting-hour + word +
+  # character-n-gram similarity (subreddit_lens, as in
+  # analytics/07_user_clustering) over the top 150 authors, which ranked the
+  # known main account 1st-2nd for three of four confirmed pairs. Pairs it
+  # proposed that the user could not confirm are left out: maremonti ~
+  # Electronic_Lettuce58, and neroanddecker / letteralmente-anni80 /
+  # stormandflowers ~ untitled-zeitung. Generale_Zod and Reflecting_Abyss1972
+  # were separate personas in both earlier adapters.
+  author_aliases:
+    SpiegoReloaded: SpiegoLeDiscussioni
+    TomBamba: Temporary-Damage6939
+    Big-Green-7236: Temporary-Damage6939
+    Generale_Zod: Amlach
+    ohnoitsalreadytaken: dniepr
+    Mypathwascalled: TractionSavant
+    Reflecting_Abyss1972: ErMostroNefasto
+    sexy_tiberio_timperi: tiberio_x_un_attimo
+    NucaLervi: CapoDiMalaSperanza
+    CristinaDavecchia: CiuseppeGonte
+    sindromediturett: CiuseppeGonte
   strip_quoted_text: true
   # Changed 2026-11, after the first Qwen adapter: a 5-word floor (was 10
   # characters), a 2000-character cap (was 512), no score floor (was 1),
@@ -46,11 +69,11 @@ model:
   # Not gated. Native system role, which carries the username; Mistral's
   # template handles a system message awkwardly.
   base_model: "Qwen/Qwen2.5-7B-Instruct"
-  output_dir: "/workspace/models/litigpt_top30_qwen7b_lora"
+  output_dir: "/workspace/models/litigpt_qwen7b_lora"
   # The first Qwen adapter is 20260924-2151-qwen2.5-7b-instruct. Edit this
   # for each run; the archive comes home as models/<version>/ whatever the
   # output_dir, via `python -m litigpt.registry import`.
-  notes: "Data v2: replies >=5 words (was 10 chars), <=2000 chars (was 512), no score floor, moderator comments out, posts as thread context (were missing)"
+  notes: "Data v2, 35 people: secondary accounts merged (11), replies >=5 words (was 10 chars), <=2000 chars (was 512), no score floor, moderator comments out, posts as thread context (were missing)"
 
 training:
   # 2, not 3. Confirmed on the corrected run (2026-09-21, 3352 steps, 2h49m):
